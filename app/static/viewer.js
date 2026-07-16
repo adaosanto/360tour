@@ -5,6 +5,7 @@
   var projectId = body.dataset.projectId;
   var initialSceneId = (body.dataset.initialSceneId || "").trim();
   var showBtnList = body.dataset.showBtnList !== "false";
+  var projectFileBase = body.dataset.projectFileBase || "";
   var panoElement = document.getElementById("pano");
   var emptyState = document.getElementById("emptyState");
   var emptyCover = document.getElementById("emptyCover");
@@ -58,8 +59,21 @@
     });
   }
 
+  function projectFileUrl(path) {
+    if (!path) return "";
+    path = String(path).replace(/^\/+/, "");
+    if (!projectFileBase) return "/project-files/" + projectId + "/" + path;
+    if (projectFileBase.slice(-1) === "/" || /[?&][^=]*=$/.test(projectFileBase)) {
+      return projectFileBase + path;
+    }
+    if (projectFileBase.indexOf("?") !== -1) {
+      return projectFileBase + "&asset=" + path;
+    }
+    return projectFileBase.replace(/\/+$/, "") + "/" + path;
+  }
+
   function imagePath(path) {
-    return path ? "/project-files/" + projectId + "/" + path : "";
+    return projectFileUrl(path);
   }
 
   function setupProjectChrome() {
@@ -137,7 +151,7 @@
     autorotate = Marzipano.autorotate({ yawSpeed: 0.03, targetPitch: 0, targetFov: Math.PI / 2 });
 
     scenes = project.scenes.map(function (sceneData) {
-      var source = Marzipano.ImageUrlSource.fromString("/project-files/" + projectId + "/" + sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg");
+      var source = Marzipano.ImageUrlSource.fromString(projectFileUrl(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg"));
       var geometry = new Marzipano.CubeGeometry(sceneData.levels);
       var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
       var view = new Marzipano.RectilinearView(sceneData.initialViewParameters, limiter);

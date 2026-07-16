@@ -45,6 +45,23 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Acesse `http://localhost:8000`.
 
+## View em PHP
+
+O editor e a API continuam em FastAPI, mas o viewer publico tambem pode ser servido por PHP:
+
+```bash
+php -S 127.0.0.1:8002
+```
+
+Acesse:
+
+```text
+http://127.0.0.1:8002/view.php?project={project_id}
+http://127.0.0.1:8002/view.php/{project_id}/{scene_id}
+```
+
+O `view.php` le o mesmo storage de projetos. Use `STORAGE_DIR` se os projetos estiverem fora de `app/temp`, e `STATIC_URL` se os arquivos estaticos forem servidos por outro caminho.
+
 ## Endpoints
 
 - `POST /api/projects` cria um projeto temporario; aceita `project_name`, `thumbnail`, `tile_size` e `jpeg_quality`.
