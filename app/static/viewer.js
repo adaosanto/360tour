@@ -20,7 +20,9 @@
   var metadataPanel = document.getElementById("metadataPanel");
   var metadataCoords = document.getElementById("metadataCoords");
   var metadataAltitude = document.getElementById("metadataAltitude");
+  var metadataHeight = document.getElementById("metadataHeight");
   var metadataDate = document.getElementById("metadataDate");
+  var metadataPhotoRow = document.getElementById("metadataPhotoRow");
   var metadataPhoto = document.getElementById("metadataPhoto");
   var photoMap = document.getElementById("photoMap");
   var mapTiles = document.getElementById("mapTiles");
@@ -38,7 +40,8 @@
   var mapPoints = [];
   var mapState = { lat: 0, lon: 0, zoom: 16 };
   var mapDrag = null;
-  var tileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
+  var baseTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
+  var overlayTileUrlTemplate = "https://tiles.arcgis.com/tiles/MRbkurfLm8nmQrDq/arcgis/rest/services/RasterLrv2026_1/MapServer/tile/{level}/{row}/{col}";
   var initialized = false;
   var pollTimer = null;
   var embeddedProject = window.__PROJECT_DATA__ || null;
@@ -212,7 +215,7 @@
     var lat = Number(coordinates.latitude);
     var lon = Number(coordinates.longitude);
     if (!isFinite(lat) || !isFinite(lon)) return null;
-    return { lat: lat, lon: lon, altitude: metadata.altitude, takenAt: metadata.takenAt, scene: scene };
+    return { lat: lat, lon: lon, altitude: metadata.altitude, height: metadata.height, takenAt: metadata.takenAt, scene: scene };
   }
 
   function formatCoords(coordinates) {
@@ -247,7 +250,9 @@
     var metadata = sceneData.metadata || {};
     metadataCoords.textContent = formatCoords(metadata.coordinates);
     metadataAltitude.textContent = metadata.altitude == null ? "Sem altitude" : metadata.altitude + " m";
+    metadataHeight.textContent = metadata.height == null ? "Sem altura" : metadata.height + " m";
     metadataDate.textContent = formatPhotoDate(metadata.takenAt);
+    metadataPhotoRow.hidden = !project.settings.showPhotoNames;
     metadataPhoto.textContent = sceneData.sourceFile || sceneData.name || sceneData.id;
   }
 
@@ -293,11 +298,21 @@
     mapState.lat = worldYToLat(centerY / Math.pow(2, 18 - mapState.zoom), mapState.zoom);
   }
 
-  function tileUrl(level, col, row) {
-    return tileUrlTemplate
+  function tileUrl(template, level, col, row) {
+    return template
       .replace("{level}", level)
       .replace("{col}", col)
       .replace("{row}", row);
+  }
+
+  function addMapTile(url, col, row, left, top, className) {
+    var image = document.createElement("img");
+    image.alt = "";
+    image.className = className;
+    image.src = url;
+    image.style.left = Math.round(col * 256 - left) + "px";
+    image.style.top = Math.round(row * 256 - top) + "px";
+    mapTiles.appendChild(image);
   }
 
   function renderMap() {
@@ -320,12 +335,8 @@
       if (row < 0 || row >= size) continue;
       for (var col = minCol; col <= maxCol; col++) {
         var wrappedCol = ((col % size) + size) % size;
-        var image = document.createElement("img");
-        image.alt = "";
-        image.src = tileUrl(zoom, wrappedCol, row);
-        image.style.left = Math.round(col * 256 - left) + "px";
-        image.style.top = Math.round(row * 256 - top) + "px";
-        mapTiles.appendChild(image);
+        addMapTile(tileUrl(baseTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-base");
+        addMapTile(tileUrl(overlayTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-overlay");
       }
     }
     updateMapMarkers();
@@ -362,22 +373,15 @@
     var top = centerY - photoMap.clientHeight / 2;
     mapPoints.forEach(function (point) {
       var marker = document.createElement("button");
-      var label = photoLabel(point.scene.data);
-      var title = label;
       var details = [];
       if (point.takenAt) details.push(formatPhotoDate(point.takenAt));
+      if (point.height != null) details.push("altura " + point.height + " m");
       if (point.altitude != null) details.push("altitude " + point.altitude + " m");
       marker.type = "button";
       marker.className = "map-marker" + (currentScene && point.scene.data.id === currentScene.data.id ? " active" : "");
       marker.style.left = Math.round(lonToWorldX(point.lon, zoom) - left) + "px";
       marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
-      marker.title = details.length ? title + " | " + details.join(" | ") : title;
-      if (project.settings.showPhotoNames) {
-        var markerLabel = document.createElement("span");
-        markerLabel.className = "map-marker-label";
-        markerLabel.textContent = label;
-        marker.appendChild(markerLabel);
-      }
+      marker.title = details.length ? details.join(" | ") : "Abrir foto";
       marker.addEventListener("click", function () { switchScene(point.scene); });
       mapMarkers.appendChild(marker);
     });

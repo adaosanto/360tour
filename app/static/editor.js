@@ -14,6 +14,8 @@
   var scenes = [];
   var currentIndex = 0;
   var saveTimer = null;
+  var savePromise = null;
+  var hasPendingSave = false;
   var selectedHotspot = null;
   var placingHotspot = null;
 
@@ -26,22 +28,62 @@
     });
   }
 
-  function markDirty() {
-    saveState.textContent = "Salvando";
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveProject, 350);
+  function normalizeSettings(settings) {
+    settings = settings || {};
+    return {
+      autorotate: !!settings.autorotate,
+      controls: settings.controls !== false,
+      fullscreen: settings.fullscreen !== false,
+      sceneList: settings.sceneList !== false,
+      mouseViewMode: settings.mouseViewMode === "qtvr" ? "qtvr" : "drag",
+      showPhotoNames: !!settings.showPhotoNames
+    };
   }
 
-  function saveProject() {
-    requestJSON("/api/projects/" + projectId, {
+  function normalizeProject(payload) {
+    payload = payload || {};
+    payload.settings = normalizeSettings(payload.settings);
+    payload.scenes = Array.isArray(payload.scenes) ? payload.scenes : [];
+    payload.scenes.forEach(function (scene) {
+      scene.infoHotspots = Array.isArray(scene.infoHotspots) ? scene.infoHotspots : [];
+      scene.linkHotspots = Array.isArray(scene.linkHotspots) ? scene.linkHotspots : [];
+    });
+    return payload;
+  }
+
+  function markDirty(options) {
+    saveState.textContent = "Salvando";
+    hasPendingSave = true;
+    clearTimeout(saveTimer);
+    if (options && options.immediate) {
+      saveProject();
+    } else {
+      saveTimer = setTimeout(saveProject, 350);
+    }
+  }
+
+  function saveProject(options) {
+    if (!project) return Promise.resolve();
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    hasPendingSave = false;
+    var requestOptions = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(project)
-    }).then(function () {
+    };
+    if (options && options.keepalive) {
+      requestOptions.keepalive = true;
+    }
+    savePromise = requestJSON("/api/projects/" + projectId, requestOptions).then(function () {
       saveState.textContent = "Salvo";
+      return true;
     }).catch(function (error) {
       saveState.textContent = error.message;
+      hasPendingSave = true;
+      throw error;
     });
+    return savePromise;
   }
 
   function initViewer() {
@@ -286,13 +328,13 @@
       key = key.charAt(0).toLowerCase() + key.slice(1);
       project.settings[key] = event.target.checked;
       renderCurrentSceneForm();
-      markDirty();
+      markDirty({ immediate: true });
     });
   });
 
   document.getElementById("settingMouseMode").addEventListener("change", function (event) {
     project.settings.mouseViewMode = event.target.value;
-    markDirty();
+    markDirty({ immediate: true });
     rebuildViewer();
   });
 
@@ -324,8 +366,9 @@
   }
 
   document.getElementById("exportZip").addEventListener("click", function () {
-    saveProject();
-    window.location.href = "/api/projects/" + projectId + "/export";
+    saveProject().then(function () {
+      window.location.href = "/api/projects/" + projectId + "/export";
+    }).catch(function () {});
   });
 
   document.getElementById("deleteProject").addEventListener("click", function () {
@@ -334,8 +377,9 @@
   });
 
   function updateReadout() {
-    if (viewer) {
-      var p = viewer.view().parameters();
+    var activeView = viewer ? viewer.view() : null;
+    if (activeView) {
+      var p = activeView.parameters();
       viewReadout.textContent = "yaw " + p.yaw.toFixed(3) + " | pitch " + p.pitch.toFixed(3) + " | fov " + p.fov.toFixed(3);
     }
     requestAnimationFrame(updateReadout);
@@ -343,7 +387,7 @@
 
   function loadProject() {
     return requestJSON("/api/projects/" + projectId).then(function (payload) {
-      project = payload;
+      project = normalizeProject(payload);
       if (!viewer) {
         initViewer();
         updateReadout();
@@ -370,7 +414,7 @@
         progressBar.value = state.percent || 0;
         setTimeout(function () {
           requestJSON("/api/projects/" + projectId).then(function (payload) {
-            project = payload;
+            project = normalizeProject(payload);
             rebuildViewer();
             pollInitialProgress();
           });
@@ -380,6 +424,12 @@
       }
     });
   }
+
+  window.addEventListener("beforeunload", function () {
+    if (hasPendingSave) {
+      saveProject({ keepalive: true }).catch(function () {});
+    }
+  });
 
   loadProject();
 })();

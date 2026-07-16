@@ -11,14 +11,14 @@ Aplicacao simples em FastAPI para transformar panoramas 360 equiretangulares em 
 - Geracao de piramide multirresolucao de tiles JPEG com Pillow.
 - Preview e editor usando a biblioteca Marzipano.
 - Visualizacao publica em `/view/{project_id}` com layout semelhante ao Marzipano Tool.
-- Extracao de coordenadas GPS e altitude a partir do EXIF da foto.
+- Extracao de coordenadas GPS, data, altura relativa e altitude a partir do EXIF/XMP da foto quando disponiveis.
 - Cenas renomeaveis, reordenaveis e removiveis.
 - Vista inicial por yaw, pitch e fov atuais do visualizador.
 - Hotspots de informacao e link, com posicionamento e reposicionamento direto no panorama.
 - Configuracoes de autorrotacao, controles, tela cheia, lista de panoramas e navegacao Drag/QTVR.
 - Exportacao ZIP com app estatica completa.
 - Mapa no visualizador e no tour exportado com tiles satelite e marcadores das fotos com coordenadas EXIF.
-- Data da foto a partir do EXIF, mapa navegavel por drag/wheel e opcao para exibir nomes das fotos nos marcadores.
+- Data da foto a partir do EXIF, mapa navegavel por drag/wheel e opcao para exibir o campo Foto nos metadados.
 - Projetos por UUID indexados em SQLite com SQLAlchemy.
 - Storage fisico configuravel para uploads, tiles, assets, exports e `project.json`.
 

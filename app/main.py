@@ -37,6 +37,15 @@ app.mount("/project-files", StaticFiles(directory=TEMP_DIR), name="project-files
 
 progress_state: dict[str, dict] = {}
 
+DEFAULT_PROJECT_SETTINGS = {
+    "autorotate": False,
+    "controls": True,
+    "fullscreen": True,
+    "sceneList": True,
+    "mouseViewMode": "drag",
+    "showPhotoNames": False,
+}
+
 
 def _db_session():
     return SessionLocal()
@@ -58,6 +67,40 @@ def _touch(path: Path) -> None:
     os.utime(path, (now, now))
 
 
+def _coerce_bool(value, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "sim"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "nao", "não"}:
+            return False
+    return bool(value)
+
+
+def _normalize_project_settings(settings: dict | None) -> dict:
+    normalized = DEFAULT_PROJECT_SETTINGS.copy()
+    if isinstance(settings, dict):
+        normalized.update(settings)
+    for key in ("autorotate", "controls", "fullscreen", "sceneList", "showPhotoNames"):
+        normalized[key] = _coerce_bool(normalized.get(key), DEFAULT_PROJECT_SETTINGS[key])
+    if normalized.get("mouseViewMode") not in {"drag", "qtvr"}:
+        normalized["mouseViewMode"] = "drag"
+    return normalized
+
+
+def _normalize_project(project: dict) -> dict:
+    project["settings"] = _normalize_project_settings(project.get("settings"))
+    project["scenes"] = project.get("scenes") if isinstance(project.get("scenes"), list) else []
+    for scene in project["scenes"]:
+        scene.setdefault("infoHotspots", [])
+        scene.setdefault("linkHotspots", [])
+    return project
+
+
 def cleanup_expired_projects() -> None:
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     max_age = TTL_HOURS * 3600
@@ -75,7 +118,7 @@ def cleanup_expired_projects() -> None:
 
 def _project_summary(project_dir: Path) -> dict | None:
     try:
-        project = load_project(project_dir)
+        project = _normalize_project(load_project(project_dir))
     except Exception:
         return None
     project_id = project.get("id") or project_dir.name
@@ -115,18 +158,19 @@ def _sync_project_record(project_dir: Path, status: str | None = None) -> Projec
     summary = _project_summary(project_dir)
     if not summary:
         return None
-    project = load_project(project_dir)
+    project = _normalize_project(load_project(project_dir))
     fallback_status = "done" if project.get("scenes") else "ready"
     record_status = progress_state.get(summary["id"], {}).get("status", status or fallback_status)
     with _db_session() as session:
         return upsert_project_record(session, project=project, project_dir=project_dir, status=record_status)
 
 
-def _backfill_missing_photo_dates(project_dir: Path, project: dict) -> bool:
+def _backfill_missing_photo_metadata(project_dir: Path, project: dict) -> bool:
     changed = False
     for scene in project.get("scenes") or []:
         metadata = scene.setdefault("metadata", {})
-        if metadata.get("takenAt"):
+        wanted_fields = ("takenAt", "height", "relativeAltitude", "absoluteAltitude", "altitude")
+        if all(metadata.get(field) is not None for field in wanted_fields):
             continue
         source_file = scene.get("sourceFile")
         if not source_file:
@@ -135,8 +179,13 @@ def _backfill_missing_photo_dates(project_dir: Path, project: dict) -> bool:
         if not source_path.exists():
             continue
         extracted = extract_photo_metadata(source_path)
-        if extracted.get("takenAt"):
-            metadata["takenAt"] = extracted["takenAt"]
+        for field in wanted_fields:
+            if metadata.get(field) is None and extracted.get(field) is not None:
+                metadata[field] = extracted[field]
+                changed = True
+        if metadata.get("coordinates") is None and extracted.get("coordinates") is not None:
+            metadata["coordinates"] = extracted["coordinates"]
+            metadata["hasGps"] = True
             changed = True
     if changed:
         save_project(project_dir, project)
@@ -158,14 +207,7 @@ def _create_project(tile_size: int, jpeg_quality: int, name: str | None = None, 
         "tileSize": tile_size,
         "jpegQuality": jpeg_quality,
         "thumbnailPath": None,
-        "settings": {
-            "autorotate": False,
-            "controls": True,
-            "fullscreen": True,
-            "sceneList": True,
-            "mouseViewMode": "drag",
-            "showPhotoNames": show_photo_names,
-        },
+        "settings": _normalize_project_settings({"showPhotoNames": show_photo_names}),
         "scenes": [],
     }
     save_project(project_dir, data)
@@ -227,7 +269,7 @@ async def _save_uploads(files: list[UploadFile], incoming_dir: Path) -> list[Pat
 def _process_files(project_id: str, files: list[str], tile_size: int, jpeg_quality: int) -> None:
     project_dir = TEMP_DIR / project_id
     try:
-        project = load_project(project_dir)
+        project = _normalize_project(load_project(project_dir))
         total = len(files)
         progress_state[project_id] = {"status": "processing", "percent": 1, "message": "Iniciando processamento.", "errors": []}
         with _db_session() as session:
@@ -341,7 +383,7 @@ async def add_panoramas(
     jpeg_quality: Annotated[int | None, Form()] = None,
 ):
     project_dir = _project_dir(project_id)
-    project = load_project(project_dir)
+    project = _normalize_project(load_project(project_dir))
     tile_size = tile_size or int(project.get("tileSize", 512))
     jpeg_quality = jpeg_quality or int(project.get("jpegQuality", 85))
     validate_options(tile_size, jpeg_quality)
@@ -356,8 +398,14 @@ async def add_panoramas(
 
 @app.get("/api/projects/{project_id}/progress")
 async def project_progress(project_id: str):
-    _project_dir(project_id)
-    return progress_state.get(project_id, {"status": "unknown", "percent": 0, "message": "Sem progresso registrado.", "errors": []})
+    project_dir = _project_dir(project_id)
+    state = progress_state.get(project_id)
+    if state:
+        return state
+    project = _normalize_project(load_project(project_dir))
+    if project.get("scenes"):
+        return {"status": "done", "percent": 100, "message": "Projeto carregado do disco.", "errors": []}
+    return {"status": "ready", "percent": 0, "message": "Projeto criado.", "errors": []}
 
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
@@ -378,8 +426,8 @@ async def project_view_scene(project_id: str, scene_id: str, request: Request):
 
 def _render_project_view(project_id: str, request: Request, scene_id: str | None) -> HTMLResponse:
     project_dir = _project_dir(project_id)
-    project = load_project(project_dir)
-    if _backfill_missing_photo_dates(project_dir, project):
+    project = _normalize_project(load_project(project_dir))
+    if _backfill_missing_photo_metadata(project_dir, project):
         _sync_project_record(project_dir)
     show_btn_list = request.query_params.get("showBtnList", "true").lower() != "false"
     return templates.TemplateResponse(
@@ -398,8 +446,8 @@ def _render_project_view(project_id: str, request: Request, scene_id: str | None
 async def project_data(project_id: str):
     project_dir = _project_dir(project_id)
     _touch(project_dir)
-    project = load_project(project_dir)
-    _backfill_missing_photo_dates(project_dir, project)
+    project = _normalize_project(load_project(project_dir))
+    _backfill_missing_photo_metadata(project_dir, project)
     _sync_project_record(project_dir)
     return JSONResponse(project, headers={"Cache-Control": "no-store"})
 
@@ -412,8 +460,8 @@ async def save_project_data(project_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Projeto invalido: cenas ausentes.")
     if not isinstance(payload.get("settings"), dict):
         raise HTTPException(status_code=400, detail="Projeto invalido: configuracoes ausentes.")
-    current = load_project(project_dir)
-    current["settings"] = payload["settings"]
+    current = _normalize_project(load_project(project_dir))
+    current["settings"] = _normalize_project_settings(payload["settings"])
     current["scenes"] = payload["scenes"]
     save_project(project_dir, current)
     _touch(project_dir)
@@ -425,8 +473,8 @@ async def save_project_data(project_id: str, request: Request):
 @app.get("/api/projects/{project_id}/export")
 async def export_zip(project_id: str):
     project_dir = _project_dir(project_id)
-    project = load_project(project_dir)
-    _backfill_missing_photo_dates(project_dir, project)
+    project = _normalize_project(load_project(project_dir))
+    _backfill_missing_photo_metadata(project_dir, project)
     if not project.get("scenes"):
         raise HTTPException(status_code=400, detail="Nao ha cenas para exportar.")
     zip_path = export_project(project_dir, STATIC_DIR)

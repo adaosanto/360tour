@@ -4,6 +4,7 @@ import json
 import math
 import re
 import shutil
+from html import unescape
 from pathlib import Path
 from typing import Callable
 
@@ -75,18 +76,70 @@ def _dms_to_decimal(value, ref: str | None) -> float | None:
     return round(decimal, 8)
 
 
+def _round_or_none(value) -> float | None:
+    number = _as_float(value)
+    return round(number, 2) if number is not None else None
+
+
+def _extract_xmp_attributes(upload_path: Path) -> dict:
+    try:
+        with upload_path.open("rb") as fh:
+            text = fh.read(2 * 1024 * 1024).decode("utf-8", errors="ignore")
+    except Exception:
+        return {}
+
+    attrs = {}
+    for match in re.finditer(r'([A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?)="([^"]*)"', text):
+        name = match.group(1)
+        value = unescape(match.group(2)).strip()
+        local_name = name.split(":", 1)[-1]
+        attrs[name] = value
+        attrs[local_name] = value
+    return attrs
+
+
+def _apply_xmp_metadata(metadata: dict, attrs: dict) -> None:
+    if not attrs:
+        return
+
+    taken_at = attrs.get("CreateDate") or attrs.get("DateTimeOriginal") or attrs.get("ModifyDate")
+    if taken_at and not metadata.get("takenAt"):
+        metadata["takenAt"] = taken_at
+
+    latitude = _as_float(attrs.get("GpsLatitude") or attrs.get("GPSLatitude"))
+    longitude = _as_float(attrs.get("GpsLongitude") or attrs.get("GPSLongitude"))
+    if latitude is not None and longitude is not None:
+        metadata["coordinates"] = {"latitude": round(latitude, 8), "longitude": round(longitude, 8)}
+        metadata["hasGps"] = True
+
+    absolute_altitude = _round_or_none(attrs.get("AbsoluteAltitude") or attrs.get("GPSAltitude"))
+    relative_altitude = _round_or_none(attrs.get("RelativeAltitude"))
+    if absolute_altitude is not None:
+        metadata["absoluteAltitude"] = absolute_altitude
+        if metadata.get("altitude") is None:
+            metadata["altitude"] = absolute_altitude
+    if relative_altitude is not None:
+        metadata["relativeAltitude"] = relative_altitude
+        metadata["height"] = relative_altitude
+
+
 def extract_photo_metadata(upload_path: Path) -> dict:
     metadata = {
         "source": "exif",
         "coordinates": None,
         "altitude": None,
+        "height": None,
+        "absoluteAltitude": None,
+        "relativeAltitude": None,
         "takenAt": None,
         "hasGps": False,
     }
+    xmp_attrs = _extract_xmp_attributes(upload_path)
     try:
         with Image.open(upload_path) as image:
             exif = image.getexif()
             if not exif:
+                _apply_xmp_metadata(metadata, xmp_attrs)
                 return metadata
 
             tags = {
@@ -112,8 +165,11 @@ def extract_photo_metadata(upload_path: Path) -> dict:
                 metadata["hasGps"] = True
             if altitude is not None:
                 metadata["altitude"] = round(altitude, 2)
+                metadata["absoluteAltitude"] = metadata["altitude"]
+            _apply_xmp_metadata(metadata, xmp_attrs)
             return metadata
     except Exception:
+        _apply_xmp_metadata(metadata, xmp_attrs)
         return metadata
 
 
