@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editor de tour</title>
+  <link rel="stylesheet" href="/static/editor.css">
+</head>
+<body>
+  <div class="app-shell" data-project-id="{{ project_id }}">
+    <aside class="sidebar">
+      <header>
+        <h1>Tour</h1>
+        <span id="saveState">Carregando</span>
+      </header>
+
+      <section>
+        <h2>Cenas</h2>
+        <div id="sceneList" class="scene-list"></div>
+        <label class="small-upload">
+          Adicionar panoramas
+          <input id="addFiles" type="file" accept=".jpg,.jpeg,.png,.tif,.tiff,image/jpeg,image/png,image/tiff" multiple>
+        </label>
+      </section>
+
+      <section>
+        <h2>Cena atual</h2>
+        <label>Nome <input id="sceneName" type="text"></label>
+        <div class="button-row">
+          <button id="moveUp" type="button">Subir</button>
+          <button id="moveDown" type="button">Descer</button>
+          <button id="deleteScene" type="button" class="danger">Excluir</button>
+        </div>
+        <button id="setInitialView" type="button">Usar vista atual como inicial</button>
+      </section>
+
+      <section>
+        <h2>Hotspots</h2>
+        <div class="button-row">
+          <button id="addInfo" type="button">Info</button>
+          <button id="addLink" type="button">Link</button>
+        </div>
+        <div id="hotspotList" class="hotspot-list"></div>
+      </section>
+
+      <section>
+        <h2>Configuracoes</h2>
+        <label><input id="settingAutorotate" type="checkbox"> Autorrotacao</label>
+        <label><input id="settingControls" type="checkbox"> Botoes de controle</label>
+        <label><input id="settingFullscreen" type="checkbox"> Tela cheia</label>
+        <label><input id="settingSceneList" type="checkbox"> Lista de panoramas</label>
+        <label>Navegacao
+          <select id="settingMouseMode">
+            <option value="drag">Drag</option>
+            <option value="qtvr">QTVR</option>
+          </select>
+        </label>
+      </section>
+
+      <footer>
+        <button id="exportZip" type="button">Exportar ZIP</button>
+        <button id="deleteProject" type="button" class="secondary">Excluir temporario</button>
+      </footer>
+    </aside>
+
+    <main class="viewer-area">
+      <div id="pano"></div>
+      <div id="progressBox" class="progress-box" hidden>
+        <div id="progressText">Processando</div>
+        <progress id="progressBar" max="100" value="0"></progress>
+      </div>
+      <div id="viewReadout" class="view-readout"></div>
+      <div id="controls" class="controls">
+        <button id="viewLeft" type="button">◀</button>
+        <button id="viewRight" type="button">▶</button>
+        <button id="viewUp" type="button">▲</button>
+        <button id="viewDown" type="button">▼</button>
+        <button id="viewIn" type="button">+</button>
+        <button id="viewOut" type="button">-</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/marzipano.js"></script>
+  <script src="/static/editor.js"></script>
+</body>
+</html>

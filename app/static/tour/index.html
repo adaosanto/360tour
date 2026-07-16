@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tour virtual</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="pano"></div>
+  <div id="topbar">
+    <button id="sceneListToggle" type="button">☰</button>
+    <strong id="sceneName"></strong>
+    <button id="mapToggle" type="button">Mapa</button>
+    <button id="fullscreenToggle" type="button">⛶</button>
+  </div>
+  <aside id="sceneList"></aside>
+  <aside id="mapPanel">
+    <header>
+      <strong>Mapa</strong>
+      <div>
+        <button id="mapZoomOut" type="button">-</button>
+        <button id="mapZoomIn" type="button">+</button>
+      </div>
+    </header>
+    <div id="mapCanvas">
+      <div id="mapTiles"></div>
+      <div id="mapMarkers"></div>
+    </div>
+    <small id="mapCaption"></small>
+  </aside>
+  <div id="controls">
+    <button id="viewLeft" type="button">◀</button>
+    <button id="viewRight" type="button">▶</button>
+    <button id="viewUp" type="button">▲</button>
+    <button id="viewDown" type="button">▼</button>
+    <button id="viewIn" type="button">+</button>
+    <button id="viewOut" type="button">-</button>
+  </div>
+  <script src="marzipano.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

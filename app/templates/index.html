@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Novo tour | Tour 360</title>
+  <link rel="stylesheet" href="/static/editor.css">
+</head>
+<body class="home">
+  <header class="home-header">
+    <div class="home-header-inner">
+      <a class="home-brand" href="/" aria-label="Tour 360 - in&iacute;cio">
+        <span class="brand-mark" aria-hidden="true">360</span>
+        <span>
+          <strong>Tour 360</strong>
+          <small>Editor Marzipano</small>
+        </span>
+      </a>
+      <span class="home-header-meta">Novo projeto</span>
+    </div>
+  </header>
+
+  <main class="home-main">
+    <div class="home-title">
+      <span class="step-label">ETAPA 1 DE 2</span>
+      <h1>Adicionar panoramas</h1>
+      <p>Selecione imagens equiretangulares com propor&ccedil;&atilde;o 2:1.</p>
+    </div>
+
+    <form id="uploadForm" class="upload-form" novalidate>
+      <div class="upload-layout">
+        <section class="upload-workspace" aria-labelledby="panoramaHeading">
+          <div class="section-heading">
+            <div>
+              <h2 id="panoramaHeading">Panoramas</h2>
+              <p>JPEG, PNG ou TIFF</p>
+            </div>
+            <span id="fileCount" class="file-count">Nenhum arquivo</span>
+          </div>
+
+          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-controls="fileInput">
+            <span class="upload-symbol" aria-hidden="true">&uarr;</span>
+            <strong>Solte os arquivos nesta area</strong>
+            <span>ou</span>
+            <span class="file-select-button">Selecionar imagens</span>
+          </div>
+          <input id="fileInput" name="files" class="visually-hidden" type="file" accept=".jpg,.jpeg,.png,.tif,.tiff,image/jpeg,image/png,image/tiff" multiple>
+
+          <div id="fileQueue" class="file-queue" hidden>
+            <div class="file-queue-header">
+              <h3>Arquivos selecionados</h3>
+              <button id="clearFiles" class="text-button" type="button">Limpar lista</button>
+            </div>
+            <ul id="fileList" class="file-list"></ul>
+          </div>
+
+          <div id="uploadStatus" class="upload-status" role="status" aria-live="polite" hidden>
+            <div class="status-heading">
+              <span id="statusMessage">Preparando arquivos...</span>
+              <span id="statusPercent">0%</span>
+            </div>
+            <progress id="uploadProgress" max="100" value="0"></progress>
+          </div>
+        </section>
+
+        <aside class="processing-panel" aria-labelledby="processingHeading">
+          <div class="section-heading compact">
+            <div>
+              <h2 id="processingHeading">Processamento</h2>
+              <p>Configura&ccedil;&otilde;es dos tiles</p>
+            </div>
+          </div>
+
+          <label class="field-label" for="tileSize">
+            <span>Tamanho do tile</span>
+            <select id="tileSize" name="tile_size">
+              <option value="256">256 px</option>
+              <option value="512" selected>512 px (padr&atilde;o)</option>
+              <option value="1024">1024 px</option>
+            </select>
+          </label>
+
+          <label class="field-label quality-field" for="jpegQuality">
+            <span class="field-label-row">
+              <span>Qualidade JPEG</span>
+              <output id="qualityValue" for="jpegQuality">85%</output>
+            </span>
+            <input id="jpegQuality" name="jpeg_quality" type="range" min="40" max="100" step="1" value="85">
+            <span class="range-labels" aria-hidden="true"><span>Menor arquivo</span><span>Maior qualidade</span></span>
+          </label>
+
+          <div class="processing-summary">
+            <span>Sa&iacute;da</span>
+            <strong>Tour web em ZIP</strong>
+          </div>
+
+          <button id="submitUpload" class="upload-submit" type="submit" disabled>
+            <span id="submitLabel">Processar panoramas</span>
+            <span aria-hidden="true">&rarr;</span>
+          </button>
+        </aside>
+      </div>
+    </form>
+  </main>
+
+  <script src="/static/upload.js"></script>
+</body>
+</html>
