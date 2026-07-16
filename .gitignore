@@ -2,7 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.env
 node_modules/
 app/temp/
 *.zip
 .DS_Store
+*:Zone.Identifier

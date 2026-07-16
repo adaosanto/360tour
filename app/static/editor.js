@@ -110,6 +110,7 @@
     document.getElementById("settingControls").checked = project.settings.controls !== false;
     document.getElementById("settingFullscreen").checked = project.settings.fullscreen !== false;
     document.getElementById("settingSceneList").checked = project.settings.sceneList !== false;
+    document.getElementById("settingShowPhotoNames").checked = !!project.settings.showPhotoNames;
     document.getElementById("settingMouseMode").value = project.settings.mouseViewMode || "drag";
     document.getElementById("controls").hidden = project.settings.controls === false;
   }
@@ -279,7 +280,7 @@
     renderHotspots();
   });
 
-  ["settingAutorotate", "settingControls", "settingFullscreen", "settingSceneList"].forEach(function (id) {
+  ["settingAutorotate", "settingControls", "settingFullscreen", "settingSceneList", "settingShowPhotoNames"].forEach(function (id) {
     document.getElementById(id).addEventListener("change", function (event) {
       var key = id.replace("setting", "");
       key = key.charAt(0).toLowerCase() + key.slice(1);

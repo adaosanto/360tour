@@ -122,6 +122,12 @@ button {
   overflow: hidden;
   border-radius: 6px;
   background: #1b242e;
+  cursor: grab;
+  touch-action: none;
+}
+
+#mapCanvas.dragging {
+  cursor: grabbing;
 }
 
 #mapTiles,
@@ -135,11 +141,13 @@ button {
   width: 256px;
   height: 256px;
   max-width: none;
+  pointer-events: none;
   user-select: none;
 }
 
 .map-marker {
   position: absolute;
+  z-index: 1;
   width: 22px;
   height: 22px;
   margin: -11px 0 0 -11px;
@@ -148,11 +156,32 @@ button {
   border-radius: 999px;
   background: #e5484d;
   box-shadow: 0 2px 9px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
 }
 
 .map-marker.active {
+  z-index: 2;
   background: #f2c94c;
   outline: 3px solid rgba(242, 201, 76, 0.35);
+}
+
+.map-marker-label {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  max-width: 170px;
+  padding: 4px 7px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: rgba(14, 24, 34, 0.88);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 #mapCaption {

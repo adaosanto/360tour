@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Visualizar tour</title>
+  <link rel="stylesheet" href="/static/viewer.css?v=project-view-7">
+</head>
+<body class="tour-view" data-project-id="{{ project_id }}" data-initial-scene-id="{{ initial_scene_id }}" data-show-btn-list="{{ show_btn_list }}">
+  <div id="pano"></div>
+
+  <section id="emptyState" class="empty-state" hidden>
+    <div id="emptyCover" class="empty-cover"></div>
+    <div class="empty-copy">
+      <strong id="emptyTitle">Tour 360</strong>
+      <span id="emptyMessage">Nenhum panorama processado neste projeto.</span>
+    </div>
+  </section>
+
+  <nav id="sceneList" aria-label="Cenas do tour">
+    <ul class="scenes" id="sceneItems"></ul>
+  </nav>
+
+  <div id="titleBar">
+    <div class="brandTitle">
+      <img class="brandLogo" src="/static/logo.png" alt="">
+      <span class="brandName" id="projectName">Tour 360</span>
+      <span class="sceneName" id="sceneName"></span>
+    </div>
+  </div>
+
+  <button type="button" id="metadataToggle" class="metadata-toggle" aria-controls="metadataPanel" aria-expanded="true">Mapa</button>
+
+  <section id="metadataPanel" class="metadata-panel" aria-label="Mapa e metadados da foto">
+    <div class="metadata-panel-header">
+      <strong>Local da foto</strong>
+      <button type="button" id="metadataClose">Ocultar</button>
+    </div>
+    <div id="photoMap" class="photo-map" aria-label="Mapa da foto">
+      <div id="mapTiles" class="map-tiles"></div>
+      <div id="mapMarkers" class="map-markers"></div>
+      <div class="photo-map-controls" aria-label="Controles do mapa">
+        <button type="button" id="mapZoomIn" aria-label="Aproximar mapa">+</button>
+        <button type="button" id="mapZoomOut" aria-label="Afastar mapa">-</button>
+        <button type="button" id="mapRecenter" aria-label="Centralizar mapa">•</button>
+      </div>
+    </div>
+    <dl class="metadata-list">
+      <div>
+        <dt>Coordenadas</dt>
+        <dd id="metadataCoords">Sem coordenadas</dd>
+      </div>
+      <div>
+        <dt>Altitude</dt>
+        <dd id="metadataAltitude">Sem altitude</dd>
+      </div>
+      <div>
+        <dt>Data</dt>
+        <dd id="metadataDate">Sem data</dd>
+      </div>
+      <div>
+        <dt>Foto</dt>
+        <dd id="metadataPhoto">Sem foto</dd>
+      </div>
+    </dl>
+  </section>
+
+  <button type="button" id="autorotateToggle" class="top-button autorotate-button" aria-label="Alternar autorrotacao" aria-pressed="false">▶</button>
+  <button type="button" id="fullscreenToggle" class="top-button fullscreen-button" aria-label="Alternar tela cheia">⛶</button>
+  <button type="button" id="sceneListToggle" class="scene-list-toggle" aria-label="Alternar lista de cenas">☰</button>
+
+  <div id="viewControls" class="view-controls" aria-label="Controles de navegacao">
+    <button type="button" id="viewUp" class="viewControlButton viewControlButton-1" aria-label="Olhar para cima">▲</button>
+    <button type="button" id="viewDown" class="viewControlButton viewControlButton-2" aria-label="Olhar para baixo">▼</button>
+    <button type="button" id="viewLeft" class="viewControlButton viewControlButton-3" aria-label="Olhar para esquerda">◀</button>
+    <button type="button" id="viewRight" class="viewControlButton viewControlButton-4" aria-label="Olhar para direita">▶</button>
+    <button type="button" id="viewIn" class="viewControlButton viewControlButton-5" aria-label="Aproximar">+</button>
+    <button type="button" id="viewOut" class="viewControlButton viewControlButton-6" aria-label="Afastar">-</button>
+  </div>
+
+  <script src="/static/marzipano.js"></script>
+  <script>
+    window.__PROJECT_DATA__ = {{ project_json | safe }};
+  </script>
+  <script src="/static/viewer.js?v=project-view-7"></script>
+</body>
+</html>

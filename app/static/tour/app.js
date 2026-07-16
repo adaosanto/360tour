@@ -12,6 +12,7 @@
   var mapCaption = document.getElementById("mapCaption");
   var mapZoomIn = document.getElementById("mapZoomIn");
   var mapZoomOut = document.getElementById("mapZoomOut");
+  var mapRecenter = document.getElementById("mapRecenter");
   var fullscreenToggle = document.getElementById("fullscreenToggle");
   var viewer = new Marzipano.Viewer(panoElement, {
     controls: { mouseViewMode: data.settings.mouseViewMode || "drag" },
@@ -22,6 +23,7 @@
   var mapPoints = [];
   var currentSceneId = null;
   var mapState = { lat: 0, lon: 0, zoom: 16 };
+  var mapDrag = null;
 
   function createInfoHotspot(hotspot) {
     var element = document.createElement("button");
@@ -76,6 +78,7 @@
     Array.prototype.forEach.call(sceneList.children, function (button) {
       button.classList.toggle("active", button.dataset.id === scene.data.id);
     });
+    updateMapCaption(scene.data);
     updateMapMarkers();
     if (data.settings.autorotate) {
       viewer.setIdleMovement(3000, autorotate);
@@ -99,7 +102,8 @@
   });
 
   function getScenePoint(scene) {
-    var coordinates = scene.data.metadata && scene.data.metadata.coordinates;
+    var metadata = scene.data.metadata || {};
+    var coordinates = metadata.coordinates;
     if (!coordinates) return null;
     var lat = Number(coordinates.latitude);
     var lon = Number(coordinates.longitude);
@@ -107,9 +111,39 @@
     return {
       lat: lat,
       lon: lon,
-      altitude: scene.data.metadata.altitude,
+      altitude: metadata.altitude,
+      takenAt: metadata.takenAt,
       scene: scene
     };
+  }
+
+  function formatPhotoDate(value) {
+    if (!value) return "Sem data";
+    var match = String(value).match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (match) return match[3] + "/" + match[2] + "/" + match[1] + " " + match[4] + ":" + match[5];
+    var parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toLocaleString("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+    return String(value);
+  }
+
+  function photoLabel(sceneData) {
+    return sceneData.name || sceneData.sourceFile || sceneData.id;
+  }
+
+  function updateMapCaption(sceneData) {
+    if (!mapCaption || !sceneData) return;
+    var metadata = sceneData.metadata || {};
+    var parts = [photoLabel(sceneData), formatPhotoDate(metadata.takenAt)];
+    if (metadata.altitude != null) parts.push(metadata.altitude + " m");
+    mapCaption.textContent = parts.join(" | ");
   }
 
   function lonToWorldX(lon, zoom) {
@@ -192,6 +226,27 @@
     updateMapMarkers();
   }
 
+  function zoomMap(delta, origin) {
+    if (!mapPoints.length) return;
+    var oldZoom = mapState.zoom;
+    var nextZoom = Math.max(2, Math.min(20, oldZoom + delta));
+    if (nextZoom === oldZoom) return;
+
+    if (origin && mapCanvas.clientWidth) {
+      var rect = mapCanvas.getBoundingClientRect();
+      var offsetX = origin.clientX - rect.left - mapCanvas.clientWidth / 2;
+      var offsetY = origin.clientY - rect.top - mapCanvas.clientHeight / 2;
+      var worldX = lonToWorldX(mapState.lon, oldZoom) + offsetX;
+      var worldY = latToWorldY(mapState.lat, oldZoom) + offsetY;
+      var scale = Math.pow(2, nextZoom - oldZoom);
+      mapState.lon = worldXToLon((worldX * scale) - offsetX, nextZoom);
+      mapState.lat = worldYToLat((worldY * scale) - offsetY, nextZoom);
+    }
+
+    mapState.zoom = nextZoom;
+    renderMap();
+  }
+
   function updateMapMarkers() {
     if (!mapMarkers || !mapPoints.length || !mapCanvas.clientWidth) return;
     mapMarkers.innerHTML = "";
@@ -202,18 +257,34 @@
     var top = centerY - mapCanvas.clientHeight / 2;
     mapPoints.forEach(function (point) {
       var marker = document.createElement("button");
-      var label = point.scene.data.name || point.scene.data.id;
+      var label = photoLabel(point.scene.data);
+      var details = [];
+      if (point.takenAt) details.push(formatPhotoDate(point.takenAt));
+      if (point.altitude != null) details.push("altitude " + point.altitude + " m");
       marker.type = "button";
       marker.className = "map-marker" + (point.scene.data.id === currentSceneId ? " active" : "");
       marker.style.left = Math.round(lonToWorldX(point.lon, zoom) - left) + "px";
       marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
-      marker.title = point.altitude == null ? label : label + " | altitude " + point.altitude + " m";
-      marker.textContent = "";
+      marker.title = details.length ? label + " | " + details.join(" | ") : label;
+      if (data.settings.showPhotoNames) {
+        var markerLabel = document.createElement("span");
+        markerLabel.className = "map-marker-label";
+        markerLabel.textContent = label;
+        marker.appendChild(markerLabel);
+      }
       marker.addEventListener("click", function () {
         switchScene(point.scene);
       });
       mapMarkers.appendChild(marker);
     });
+  }
+
+  function panMap(start, event) {
+    var centerX = start.centerX - (event.clientX - start.x);
+    var centerY = start.centerY - (event.clientY - start.y);
+    mapState.lon = worldXToLon(centerX, mapState.zoom);
+    mapState.lat = worldYToLat(centerY, mapState.zoom);
+    renderMap();
   }
 
   mapPoints = scenes.map(getScenePoint).filter(Boolean);
@@ -227,13 +298,45 @@
       }
     });
     mapZoomIn.addEventListener("click", function () {
-      mapState.zoom = Math.min(20, mapState.zoom + 1);
-      renderMap();
+      zoomMap(1);
     });
     mapZoomOut.addEventListener("click", function () {
-      mapState.zoom = Math.max(2, mapState.zoom - 1);
+      zoomMap(-1);
+    });
+    mapRecenter.addEventListener("click", function () {
+      fitMapToPoints();
       renderMap();
     });
+    mapCanvas.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0 || event.target.closest(".map-marker, #mapPanel header")) return;
+      mapDrag = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        centerX: lonToWorldX(mapState.lon, mapState.zoom),
+        centerY: latToWorldY(mapState.lat, mapState.zoom)
+      };
+      mapCanvas.classList.add("dragging");
+      mapCanvas.setPointerCapture(event.pointerId);
+    });
+    mapCanvas.addEventListener("pointermove", function (event) {
+      if (!mapDrag || mapDrag.id !== event.pointerId) return;
+      panMap(mapDrag, event);
+    });
+    function endMapDrag(event) {
+      if (!mapDrag || mapDrag.id !== event.pointerId) return;
+      mapDrag = null;
+      mapCanvas.classList.remove("dragging");
+      if (mapCanvas.hasPointerCapture(event.pointerId)) {
+        mapCanvas.releasePointerCapture(event.pointerId);
+      }
+    }
+    mapCanvas.addEventListener("pointerup", endMapDrag);
+    mapCanvas.addEventListener("pointercancel", endMapDrag);
+    mapCanvas.addEventListener("wheel", function (event) {
+      event.preventDefault();
+      zoomMap(event.deltaY < 0 ? 1 : -1, event);
+    }, { passive: false });
     window.addEventListener("resize", renderMap);
   } else {
     document.body.classList.add("hide-map");

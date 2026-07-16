@@ -80,6 +80,7 @@ def extract_photo_metadata(upload_path: Path) -> dict:
         "source": "exif",
         "coordinates": None,
         "altitude": None,
+        "takenAt": None,
         "hasGps": False,
     }
     try:
@@ -87,6 +88,14 @@ def extract_photo_metadata(upload_path: Path) -> dict:
             exif = image.getexif()
             if not exif:
                 return metadata
+
+            tags = {
+                ExifTags.TAGS.get(tag, tag): value
+                for tag, value in exif.items()
+            }
+            taken_at = tags.get("DateTimeOriginal") or tags.get("DateTimeDigitized") or tags.get("DateTime")
+            if taken_at:
+                metadata["takenAt"] = str(taken_at)
 
             gps_raw = exif.get_ifd(ExifTags.IFD.GPSInfo) if hasattr(ExifTags, "IFD") else exif.get(34853, {})
             gps = {

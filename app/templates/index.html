@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Novo tour | Tour 360</title>
+  <title>Novo projeto | Tour 360</title>
   <link rel="stylesheet" href="/static/editor.css">
 </head>
 <body class="home">
   <header class="home-header">
     <div class="home-header-inner">
-      <a class="home-brand" href="/" aria-label="Tour 360 - in&iacute;cio">
+      <a class="home-brand" href="/" aria-label="Tour 360 - inicio">
         <span class="brand-mark" aria-hidden="true">360</span>
         <span>
           <strong>Tour 360</strong>
@@ -22,41 +22,47 @@
 
   <main class="home-main">
     <div class="home-title">
-      <span class="step-label">ETAPA 1 DE 2</span>
-      <h1>Adicionar panoramas</h1>
-      <p>Selecione imagens equiretangulares com propor&ccedil;&atilde;o 2:1.</p>
+      <span class="step-label">ETAPA 1</span>
+      <h1>Criar projeto</h1>
+      <p>Defina os dados iniciais do tour. Os panoramas serao adicionados no editor.</p>
     </div>
 
     <form id="uploadForm" class="upload-form" novalidate>
-      <div class="upload-layout">
-        <section class="upload-workspace" aria-labelledby="panoramaHeading">
+      <div class="upload-layout project-layout">
+        <section class="upload-workspace" aria-labelledby="projectHeading">
           <div class="section-heading">
             <div>
-              <h2 id="panoramaHeading">Panoramas</h2>
-              <p>JPEG, PNG ou TIFF</p>
+              <h2 id="projectHeading">Projeto</h2>
+              <p>Identificacao e imagem de capa</p>
             </div>
-            <span id="fileCount" class="file-count">Nenhum arquivo</span>
           </div>
 
-          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-controls="fileInput">
-            <span class="upload-symbol" aria-hidden="true">&uarr;</span>
-            <strong>Solte os arquivos nesta area</strong>
-            <span>ou</span>
-            <span class="file-select-button">Selecionar imagens</span>
-          </div>
-          <input id="fileInput" name="files" class="visually-hidden" type="file" accept=".jpg,.jpeg,.png,.tif,.tiff,image/jpeg,image/png,image/tiff" multiple>
+          <label class="field-label project-name-field" for="projectName">
+            <span>Nome do projeto</span>
+            <input id="projectName" name="project_name" type="text" maxlength="120" value="Tour 360">
+          </label>
 
-          <div id="fileQueue" class="file-queue" hidden>
-            <div class="file-queue-header">
-              <h3>Arquivos selecionados</h3>
-              <button id="clearFiles" class="text-button" type="button">Limpar lista</button>
+          <div class="thumbnail-grid">
+            <label class="thumbnail-drop" id="dropZone" for="thumbnailInput">
+              <input id="thumbnailInput" name="thumbnail" class="visually-hidden" type="file" accept=".jpg,.jpeg,.png,.webp,.tif,.tiff,image/jpeg,image/png,image/webp,image/tiff">
+              <span class="thumbnail-preview" id="thumbnailPreview">
+                <span class="upload-symbol" aria-hidden="true">&uarr;</span>
+              </span>
+              <span>
+                <strong>Thumbnail</strong>
+                <small id="thumbnailName">Opcional, usada como capa do projeto</small>
+              </span>
+            </label>
+
+            <div class="project-note">
+              <strong>Fluxo</strong>
+              <p>Crie o projeto, abra o editor e envie os panoramas equiretangulares 2:1 pela area de cenas.</p>
             </div>
-            <ul id="fileList" class="file-list"></ul>
           </div>
 
           <div id="uploadStatus" class="upload-status" role="status" aria-live="polite" hidden>
             <div class="status-heading">
-              <span id="statusMessage">Preparando arquivos...</span>
+              <span id="statusMessage">Criando projeto...</span>
               <span id="statusPercent">0%</span>
             </div>
             <progress id="uploadProgress" max="100" value="0"></progress>
@@ -67,7 +73,7 @@
           <div class="section-heading compact">
             <div>
               <h2 id="processingHeading">Processamento</h2>
-              <p>Configura&ccedil;&otilde;es dos tiles</p>
+              <p>Valores padrao para novos panoramas</p>
             </div>
           </div>
 
@@ -75,7 +81,7 @@
             <span>Tamanho do tile</span>
             <select id="tileSize" name="tile_size">
               <option value="256">256 px</option>
-              <option value="512" selected>512 px (padr&atilde;o)</option>
+              <option value="512" selected>512 px (padrao)</option>
               <option value="1024">1024 px</option>
             </select>
           </label>
@@ -90,19 +96,37 @@
           </label>
 
           <div class="processing-summary">
-            <span>Sa&iacute;da</span>
-            <strong>Tour web em ZIP</strong>
+            <span>Storage</span>
+            <strong>Disco fisico temporario</strong>
           </div>
 
-          <button id="submitUpload" class="upload-submit" type="submit" disabled>
-            <span id="submitLabel">Processar panoramas</span>
+          <label class="option-toggle">
+            <input id="showPhotoNames" name="show_photo_names" type="checkbox">
+            <span>Exibir nome das fotos no mapa</span>
+          </label>
+
+          <button id="submitUpload" class="upload-submit" type="submit">
+            <span id="submitLabel">Criar projeto</span>
             <span aria-hidden="true">&rarr;</span>
           </button>
         </aside>
       </div>
     </form>
+
+    <section class="projects-section" aria-labelledby="projectsHeading">
+      <div class="section-heading">
+        <div>
+          <h2 id="projectsHeading">Projetos existentes</h2>
+          <p>Projetos temporarios salvos no disco fisico.</p>
+        </div>
+        <button id="refreshProjects" class="text-button neutral" type="button">Atualizar</button>
+      </div>
+      <div id="projectList" class="project-list" aria-live="polite">
+        <p class="project-list-message">Carregando projetos...</p>
+      </div>
+    </section>
   </main>
 
-  <script src="/static/upload.js"></script>
+  <script src="/static/upload.js?v=project-create-3"></script>
 </body>
 </html>

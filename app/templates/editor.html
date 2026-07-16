@@ -49,6 +49,7 @@
         <label><input id="settingControls" type="checkbox"> Botoes de controle</label>
         <label><input id="settingFullscreen" type="checkbox"> Tela cheia</label>
         <label><input id="settingSceneList" type="checkbox"> Lista de panoramas</label>
+        <label><input id="settingShowPhotoNames" type="checkbox"> Exibir nome das fotos no mapa</label>
         <label>Navegacao
           <select id="settingMouseMode">
             <option value="drag">Drag</option>
@@ -58,6 +59,7 @@
       </section>
 
       <footer>
+        <a class="button-link" href="/view/{{ project_id }}" target="_blank" rel="noopener">Visualizar tour</a>
         <button id="exportZip" type="button">Exportar ZIP</button>
         <button id="deleteProject" type="button" class="secondary">Excluir temporario</button>
       </footer>
