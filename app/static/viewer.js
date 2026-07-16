@@ -40,6 +40,7 @@
   var mapPoints = [];
   var mapState = { lat: 0, lon: 0, zoom: 16 };
   var mapDrag = null;
+  var cameraDirectionFrame = null;
   var baseTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
   var overlayTileUrlTemplate = "https://tiles.arcgis.com/tiles/MRbkurfLm8nmQrDq/arcgis/rest/services/RasterLrv2026_1/MapServer/tile/{level}/{row}/{col}";
   var initialized = false;
@@ -246,6 +247,30 @@
     return sceneData.name || sceneData.sourceFile || sceneData.id;
   }
 
+  function readNumericMetadata(metadata, keys) {
+    for (var i = 0; i < keys.length; i++) {
+      var value = Number(metadata[keys[i]]);
+      if (isFinite(value)) return value;
+    }
+    return 0;
+  }
+
+  function cameraHeadingOffset(sceneData) {
+    var metadata = sceneData.metadata || {};
+    return readNumericMetadata(metadata, [
+      "cameraYaw",
+      "cameraYawDegree",
+      "gimbalYawDegree",
+      "GimbalYawDegree",
+      "gimbalYaw",
+      "flightYaw",
+      "flightYawDegree",
+      "FlightYawDegree",
+      "droneYaw",
+      "heading"
+    ]);
+  }
+
   function updateMetadata(sceneData) {
     var metadata = sceneData.metadata || {};
     metadataCoords.textContent = formatCoords(metadata.coordinates);
@@ -382,9 +407,28 @@
       marker.style.left = Math.round(lonToWorldX(point.lon, zoom) - left) + "px";
       marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
       marker.title = details.length ? details.join(" | ") : "Abrir foto";
+      if (currentScene && point.scene.data.id === currentScene.data.id) {
+        marker.appendChild(document.createElement("span")).className = "map-camera-direction";
+      }
       marker.addEventListener("click", function () { switchScene(point.scene); });
       mapMarkers.appendChild(marker);
     });
+    updateCameraDirectionIndicator();
+  }
+
+  function updateCameraDirectionIndicator() {
+    if (!currentScene || !mapMarkers) return;
+    var indicator = mapMarkers.querySelector(".map-camera-direction");
+    if (!indicator) return;
+    var params = currentScene.view.parameters();
+    var bearing = cameraHeadingOffset(currentScene.data) + (params.yaw * 180 / Math.PI);
+    bearing = ((bearing % 360) + 360) % 360;
+    indicator.style.transform = "translate(-50%, -100%) rotate(" + bearing.toFixed(2) + "deg)";
+  }
+
+  function runCameraDirectionLoop() {
+    updateCameraDirectionIndicator();
+    cameraDirectionFrame = requestAnimationFrame(runCameraDirectionLoop);
   }
 
   function panMap(start, event) {
@@ -404,6 +448,9 @@
     fitMapToPoints();
     metadataPanel.classList.add("enabled");
     renderMap();
+    if (!cameraDirectionFrame) {
+      runCameraDirectionLoop();
+    }
   }
 
   function setupControls() {

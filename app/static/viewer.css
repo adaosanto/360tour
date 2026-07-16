@@ -379,6 +379,32 @@ button {
   outline: 3px solid rgba(242, 201, 76, 0.35);
 }
 
+.map-camera-direction {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 38px;
+  border-radius: 999px;
+  background: rgba(242, 201, 76, 0.88);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  transform-origin: 50% 100%;
+}
+
+.map-camera-direction::after {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-right: 6px solid transparent;
+  border-bottom: 8px solid rgba(242, 201, 76, 0.95);
+  border-left: 6px solid transparent;
+  content: "";
+  transform: translateX(-50%);
+}
+
 .metadata-list {
   display: grid;
   gap: 1px;

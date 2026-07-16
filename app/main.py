@@ -169,7 +169,21 @@ def _backfill_missing_photo_metadata(project_dir: Path, project: dict) -> bool:
     changed = False
     for scene in project.get("scenes") or []:
         metadata = scene.setdefault("metadata", {})
-        wanted_fields = ("takenAt", "height", "relativeAltitude", "absoluteAltitude", "altitude")
+        wanted_fields = (
+            "takenAt",
+            "height",
+            "relativeAltitude",
+            "absoluteAltitude",
+            "altitude",
+            "gimbalRollDegree",
+            "gimbalYawDegree",
+            "gimbalPitchDegree",
+            "flightRollDegree",
+            "flightYawDegree",
+            "flightPitchDegree",
+            "cameraYaw",
+            "cameraYawSource",
+        )
         if all(metadata.get(field) is not None for field in wanted_fields):
             continue
         source_file = scene.get("sourceFile")

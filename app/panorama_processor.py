@@ -122,6 +122,22 @@ def _apply_xmp_metadata(metadata: dict, attrs: dict) -> None:
         metadata["relativeAltitude"] = relative_altitude
         metadata["height"] = relative_altitude
 
+    orientation_fields = {
+        "gimbalRollDegree": "GimbalRollDegree",
+        "gimbalYawDegree": "GimbalYawDegree",
+        "gimbalPitchDegree": "GimbalPitchDegree",
+        "flightRollDegree": "FlightRollDegree",
+        "flightYawDegree": "FlightYawDegree",
+        "flightPitchDegree": "FlightPitchDegree",
+    }
+    for output_key, xmp_key in orientation_fields.items():
+        value = _round_or_none(attrs.get(xmp_key))
+        if value is not None:
+            metadata[output_key] = value
+    if metadata.get("gimbalYawDegree") is not None:
+        metadata["cameraYaw"] = metadata["gimbalYawDegree"]
+        metadata["cameraYawSource"] = "gimbalYawDegree"
+
 
 def extract_photo_metadata(upload_path: Path) -> dict:
     metadata = {
@@ -131,6 +147,14 @@ def extract_photo_metadata(upload_path: Path) -> dict:
         "height": None,
         "absoluteAltitude": None,
         "relativeAltitude": None,
+        "gimbalRollDegree": None,
+        "gimbalYawDegree": None,
+        "gimbalPitchDegree": None,
+        "flightRollDegree": None,
+        "flightYawDegree": None,
+        "flightPitchDegree": None,
+        "cameraYaw": None,
+        "cameraYawSource": None,
         "takenAt": None,
         "hasGps": False,
     }
