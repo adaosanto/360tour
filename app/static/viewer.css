@@ -82,127 +82,137 @@ button {
 
 #titleBar {
   position: absolute;
-  top: 14px;
-  left: 64px;
-  right: 176px;
-  height: 52px;
-  z-index: 5;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 8;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   pointer-events: none;
 }
 
 .single-scene #titleBar {
-  left: 14px;
+  left: 16px;
 }
 
 #titleBar .brandTitle {
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: 100%;
-  height: 100%;
-  padding: 8px 14px;
+  gap: 10px;
+  min-width: 0;
+  max-width: min(560px, calc(100vw - 260px));
+  min-height: 50px;
+  padding: 7px 12px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(16, 24, 32, 0.72);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(9, 14, 19, 0.68);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(16px);
   pointer-events: auto;
 }
 
 .brandLogo {
   display: block;
-  width: 118px;
-  height: 36px;
-  flex: 0 0 118px;
+  width: 96px;
+  height: 34px;
+  flex: 0 0 96px;
   object-fit: contain;
+}
+
+.brandText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
 .brandName,
 .sceneName {
   min-width: 0;
   overflow: hidden;
-  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .brandName {
-  flex: 0 1 auto;
-  max-width: 34vw;
   color: #fff;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-}
-
-.sceneName {
-  flex: 0 0 auto;
-  max-width: min(260px, 30vw);
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 13px;
   line-height: 18px;
 }
 
-.sceneName::before {
-  content: "";
+.sceneName {
+  max-width: 100%;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  line-height: 16px;
 }
 
-.top-button,
-.metadata-toggle,
+.sceneName:empty {
+  display: none;
+}
+
+.viewerActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(9, 14, 19, 0.68);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+}
+
+.header-button {
+  display: grid;
+  place-items: center;
+  height: 38px;
+  min-width: 38px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.header-button:hover,
+.header-button.enabled {
+  border-color: rgba(151, 214, 184, 0.48);
+  background: rgba(25, 89, 75, 0.82);
+  color: #fff;
+}
+
 .scene-list-toggle {
-  position: absolute;
-  top: 14px;
-  z-index: 6;
-  height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(16, 24, 32, 0.74);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  backdrop-filter: blur(14px);
-}
-
-.top-button:hover,
-.metadata-toggle:hover,
-.scene-list-toggle:hover,
-.top-button.enabled,
-.metadata-toggle.enabled,
-.scene-list-toggle.enabled {
-  background: rgba(25, 89, 75, 0.9);
-}
-
-.scene-list-toggle {
-  left: 14px;
   width: 42px;
   font-size: 18px;
 }
 
 .autorotate-button {
-  right: 62px;
-  width: 42px;
+  width: 38px;
   font-size: 15px;
 }
 
 .fullscreen-button {
-  right: 14px;
-  width: 42px;
+  width: 38px;
   font-size: 18px;
 }
 
 .metadata-toggle {
-  right: 112px;
-  width: 58px;
-  padding: 0 8px;
+  min-width: 58px;
   font-size: 13px;
 }
 
 #sceneList {
   position: absolute;
-  top: 76px;
-  left: 14px;
-  z-index: 4;
+  top: 82px;
+  left: 16px;
+  z-index: 7;
   display: none;
   width: min(300px, calc(100vw - 28px));
   max-height: min(380px, calc(100vh - 96px));
@@ -272,8 +282,8 @@ button {
 
 .metadata-panel {
   position: absolute;
-  right: 14px;
-  top: 76px;
+  right: 16px;
+  top: 82px;
   z-index: 7;
   display: none;
   width: min(360px, calc(100vw - 28px));
@@ -603,9 +613,9 @@ button {
 @media (max-width: 700px) {
   #titleBar {
     top: 10px;
-    left: 58px;
-    right: 120px;
-    height: 46px;
+    left: 10px;
+    right: 10px;
+    gap: 8px;
   }
 
   .single-scene #titleBar {
@@ -613,62 +623,56 @@ button {
   }
 
   #titleBar .brandTitle {
+    flex: 1 1 auto;
+    max-width: none;
+    min-height: 46px;
     gap: 8px;
     padding: 6px 9px;
   }
 
   .brandLogo {
-    width: 84px;
-    height: 30px;
-    flex-basis: 84px;
+    width: 76px;
+    height: 28px;
+    flex-basis: 76px;
   }
 
   .brandName {
-    max-width: 28vw;
     font-size: 13px;
+    line-height: 17px;
   }
 
   .sceneName {
-    display: none;
     font-size: 12px;
+    line-height: 15px;
   }
 
-  .top-button,
-  .metadata-toggle,
-  .scene-list-toggle {
-    top: 10px;
-    height: 38px;
+  .viewerActions {
+    gap: 5px;
+    padding: 4px;
+  }
+
+  .header-button {
+    height: 36px;
+    min-width: 36px;
+    padding: 0 9px;
   }
 
   .scene-list-toggle,
   .autorotate-button,
   .fullscreen-button {
-    width: 38px;
-  }
-
-  .scene-list-toggle {
-    left: 10px;
-  }
-
-  .autorotate-button {
-    right: 52px;
-  }
-
-  .fullscreen-button {
-    right: 10px;
+    width: 36px;
   }
 
   .metadata-toggle {
-    right: 94px;
-    width: 52px;
+    min-width: 50px;
     font-size: 12px;
   }
 
   #sceneList {
-    top: 60px;
+    top: 66px;
     left: 10px;
     width: calc(100vw - 20px);
-    max-height: min(340px, calc(100vh - 80px));
+    max-height: min(340px, calc(100vh - 86px));
     padding: 8px;
   }
 
@@ -685,12 +689,27 @@ button {
   }
 
   .metadata-panel {
-    top: 60px;
+    top: 66px;
     right: 10px;
     width: calc(100vw - 20px);
   }
 
   .photo-map {
     height: 210px;
+  }
+}
+
+@media (max-width: 460px) {
+  .brandLogo {
+    display: none;
+  }
+
+  #titleBar .brandTitle {
+    min-width: 0;
+  }
+
+  .metadata-toggle {
+    min-width: 44px;
+    padding: 0 7px;
   }
 }

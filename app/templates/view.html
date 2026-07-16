@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Visualizar tour</title>
-  <link rel="stylesheet" href="/static/viewer.css?v=project-view-10">
+  <link rel="stylesheet" href="/static/viewer.css?v=project-view-11">
 </head>
 <body class="tour-view" data-project-id="{{ project_id }}" data-initial-scene-id="{{ initial_scene_id }}" data-show-btn-list="{{ show_btn_list }}">
   <div id="pano"></div>
@@ -21,15 +21,21 @@
     <ul class="scenes" id="sceneItems"></ul>
   </nav>
 
-  <div id="titleBar">
+  <header id="titleBar" aria-label="Cabecalho do tour">
     <div class="brandTitle">
       <img class="brandLogo" src="/static/logo.png" alt="">
-      <span class="brandName" id="projectName">Tour 360</span>
-      <span class="sceneName" id="sceneName"></span>
+      <div class="brandText">
+        <span class="brandName" id="projectName">Tour 360</span>
+        <span class="sceneName" id="sceneName"></span>
+      </div>
     </div>
-  </div>
-
-  <button type="button" id="metadataToggle" class="metadata-toggle" aria-controls="metadataPanel" aria-expanded="true">Mapa</button>
+    <div class="viewerActions" aria-label="Acoes do tour">
+      <button type="button" id="sceneListToggle" class="header-button scene-list-toggle" aria-label="Alternar lista de cenas">☰</button>
+      <button type="button" id="metadataToggle" class="header-button metadata-toggle" aria-controls="metadataPanel" aria-expanded="true">Mapa</button>
+      <button type="button" id="autorotateToggle" class="header-button autorotate-button" aria-label="Alternar autorrotacao" aria-pressed="false">▶</button>
+      <button type="button" id="fullscreenToggle" class="header-button fullscreen-button" aria-label="Alternar tela cheia">⛶</button>
+    </div>
+  </header>
 
   <section id="metadataPanel" class="metadata-panel" aria-label="Mapa e metadados da foto">
     <div class="metadata-panel-header">
@@ -68,10 +74,6 @@
       </div>
     </dl>
   </section>
-
-  <button type="button" id="autorotateToggle" class="top-button autorotate-button" aria-label="Alternar autorrotacao" aria-pressed="false">▶</button>
-  <button type="button" id="fullscreenToggle" class="top-button fullscreen-button" aria-label="Alternar tela cheia">⛶</button>
-  <button type="button" id="sceneListToggle" class="scene-list-toggle" aria-label="Alternar lista de cenas">☰</button>
 
   <div id="viewControls" class="view-controls" aria-label="Controles de navegacao">
     <button type="button" id="viewUp" class="viewControlButton viewControlButton-1" aria-label="Olhar para cima">▲</button>
