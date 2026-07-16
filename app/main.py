@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
+import math
 import os
 import shutil
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
@@ -204,6 +210,283 @@ def _backfill_missing_photo_metadata(project_dir: Path, project: dict) -> bool:
     if changed:
         save_project(project_dir, project)
     return changed
+
+
+def _as_number(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius = 6371008.8
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    return 2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _project_scene_point(scene: dict) -> tuple[float, float] | None:
+    coordinates = (scene.get("metadata") or {}).get("coordinates") or {}
+    lat = _as_number(coordinates.get("latitude"))
+    lon = _as_number(coordinates.get("longitude"))
+    if lat is None or lon is None:
+        return None
+    return lat, lon
+
+
+def _feature_point_coordinates(feature: dict) -> tuple[float, float] | None:
+    geometry = feature.get("geometry") or {}
+    coordinates = geometry.get("coordinates")
+    if geometry.get("type") == "Point" and isinstance(coordinates, list) and len(coordinates) >= 2:
+        lon = _as_number(coordinates[0])
+        lat = _as_number(coordinates[1])
+        if lat is not None and lon is not None:
+            return lat, lon
+    return None
+
+
+def _identifier_text(value) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return str(value).strip()
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _property_identifier(properties: dict, candidates: list[str]) -> str | None:
+    for field in candidates:
+        identifier = _identifier_text(properties.get(field))
+        if identifier:
+            return identifier
+    return None
+
+
+def _point_identifier(properties: dict, id_field: str) -> str | None:
+    candidates = [id_field, "point_id", "ponto_id", "PONTO_ID", "OBJECTID", "ObjectId", "objectid", "id"]
+    return _property_identifier(properties, candidates)
+
+
+def _guid_identifier(properties: dict) -> str:
+    candidates = ["globalid", "GlobalID", "GLOBALID", "GlobalId", "global_id", "guid", "GUID"]
+    return _property_identifier(properties, candidates) or ""
+
+
+def _arcgis_geojson_url(arcgis_url: str) -> str:
+    parts = urllib.parse.urlsplit(arcgis_url)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    normalized = []
+    has_out_fields = False
+    has_format = False
+    for key, value in query:
+        lower_key = key.lower()
+        if lower_key == "outfields":
+            has_out_fields = True
+            normalized.append((key, "*"))
+        elif lower_key == "f":
+            has_format = True
+            normalized.append((key, "pgeojson"))
+        else:
+            normalized.append((key, value))
+    if not has_out_fields:
+        normalized.append(("outFields", "*"))
+    if not has_format:
+        normalized.append(("f", "pgeojson"))
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(normalized), parts.fragment))
+
+
+def _fetch_geojson_points(arcgis_url: str, id_field: str) -> list[dict]:
+    if not arcgis_url or not arcgis_url.lower().startswith(("https://", "http://")):
+        raise HTTPException(status_code=400, detail="Informe uma URL HTTP/HTTPS valida do ArcGIS.")
+    request = urllib.request.Request(_arcgis_geojson_url(arcgis_url), headers={"User-Agent": "MarzipanoClone/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read(20 * 1024 * 1024)
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"ArcGIS retornou HTTP {exc.code}.") from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Nao foi possivel consultar o ArcGIS: {exc.reason}") from exc
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Resposta do ArcGIS nao e um GeoJSON valido.") from exc
+    if isinstance(payload, dict) and payload.get("error"):
+        message = payload["error"].get("message") if isinstance(payload["error"], dict) else "Erro no ArcGIS."
+        raise HTTPException(status_code=502, detail=f"ArcGIS: {message}")
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, list):
+        raise HTTPException(status_code=502, detail="Resposta do ArcGIS nao contem features GeoJSON.")
+    points = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        coordinates = _feature_point_coordinates(feature)
+        properties = feature.get("properties") or {}
+        point_id = _point_identifier(properties, id_field)
+        if coordinates and point_id:
+            points.append({
+                "id": point_id,
+                "guid": _guid_identifier(properties),
+                "latitude": coordinates[0],
+                "longitude": coordinates[1],
+                "properties": properties,
+            })
+    return points
+
+
+def _scene_height(scene: dict):
+    metadata = scene.get("metadata") or {}
+    for field in ("height", "relativeAltitude", "absoluteAltitude", "altitude"):
+        if metadata.get(field) not in (None, ""):
+            return metadata.get(field)
+    return ""
+
+
+def _autorename_payload_options(payload: dict) -> tuple[str, float, str]:
+    arcgis_url = str(payload.get("arcgisUrl") or "").strip()
+    max_distance = _as_number(payload.get("maxDistanceMeters"))
+    id_field = str(payload.get("idField") or "OBJECTID").strip() or "OBJECTID"
+    if max_distance is None or max_distance <= 0:
+        raise HTTPException(status_code=400, detail="Distancia maxima deve ser maior que zero.")
+    return arcgis_url, max_distance, id_field
+
+
+def _build_autorename_matches(project: dict, points: list[dict], max_distance: float) -> list[dict]:
+    matches = []
+    for scene in project.get("scenes") or []:
+        scene_point = _project_scene_point(scene)
+        if not scene_point:
+            matches.append({
+                "sceneId": scene.get("id"),
+                "sceneName": scene.get("name"),
+                "sourceFile": scene.get("sourceFile"),
+                "height": _scene_height(scene),
+                "matched": False,
+                "reason": "Cena sem coordenadas GPS.",
+            })
+            continue
+        best = None
+        for point in points:
+            distance = _haversine_meters(scene_point[0], scene_point[1], point["latitude"], point["longitude"])
+            if best is None or distance < best["distanceMeters"]:
+                best = {**point, "distanceMeters": distance}
+        if not best:
+            matches.append({
+                "sceneId": scene.get("id"),
+                "sceneName": scene.get("name"),
+                "sourceFile": scene.get("sourceFile"),
+                "height": _scene_height(scene),
+                "photo": {"latitude": scene_point[0], "longitude": scene_point[1]},
+                "matched": False,
+                "reason": "Nenhum ponto ArcGIS retornado.",
+            })
+            continue
+        within_distance = best["distanceMeters"] <= max_distance
+        matches.append({
+            "sceneId": scene.get("id"),
+            "sceneName": scene.get("name"),
+            "sourceFile": scene.get("sourceFile"),
+            "height": _scene_height(scene),
+            "photo": {"latitude": scene_point[0], "longitude": scene_point[1]},
+            "point": {"id": best["id"], "guid": best.get("guid") or "", "latitude": best["latitude"], "longitude": best["longitude"]},
+            "distanceMeters": round(best["distanceMeters"], 2),
+            "matched": within_distance,
+            "reason": None if within_distance else f"Fora do limite de {max_distance:g} m.",
+            "newId": best["id"] if within_distance else None,
+            "newName": f"PONTO {best['id']}" if within_distance else None,
+        })
+    return matches
+
+
+def _autorename_preview(project_dir: Path, payload: dict) -> dict:
+    arcgis_url, max_distance, id_field = _autorename_payload_options(payload)
+    project = _normalize_project(load_project(project_dir))
+    _backfill_missing_photo_metadata(project_dir, project)
+    points = _fetch_geojson_points(arcgis_url, id_field)
+    matches = _build_autorename_matches(project, points, max_distance)
+    matched_count = sum(1 for match in matches if match.get("matched"))
+    duplicate_ids = sorted({
+        match["newId"]
+        for match in matches
+        if match.get("matched") and sum(1 for item in matches if item.get("newId") == match["newId"]) > 1
+    })
+    return {
+        "pointCount": len(points),
+        "sceneCount": len(project.get("scenes") or []),
+        "matchedCount": matched_count,
+        "unmatchedCount": len(matches) - matched_count,
+        "duplicatePointIds": duplicate_ids,
+        "matches": matches,
+    }
+
+
+def _csv_payload_value(payload: dict, key: str) -> str:
+    return str(payload.get(key) or "").strip()
+
+
+def _scene_link(base_url: str, project_id: str, scene_id: str) -> str:
+    quoted_project = urllib.parse.quote(project_id, safe="")
+    quoted_scene = urllib.parse.quote(str(scene_id), safe="")
+    return f"{base_url.rstrip('/')}/view/{quoted_project}/{quoted_scene}"
+
+
+def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url: str) -> str:
+    preview = _autorename_preview(project_dir, payload)
+    if preview["duplicatePointIds"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Mais de uma foto corresponde ao mesmo ponto: " + ", ".join(preview["duplicatePointIds"]),
+        )
+    rows = []
+    fixed_values = {
+        "Ciclo": _csv_payload_value(payload, "ciclo"),
+        "Profissional": _csv_payload_value(payload, "profissional"),
+        "Finalidade": _csv_payload_value(payload, "finalidade"),
+        "DepartamentoSolicitante": _csv_payload_value(payload, "departamentoSolicitante"),
+        "Situacao": _csv_payload_value(payload, "situacao"),
+    }
+    for match in preview["matches"]:
+        if not match.get("matched"):
+            continue
+        point = match.get("point") or {}
+        scene_id = str(match.get("newId") or match.get("sceneId") or "")
+        rows.append({
+            "OBJECTID": point.get("id") or match.get("newId") or "",
+            "guid": point.get("guid") or "",
+            "Observação": match.get("sourceFile") or match.get("sceneName") or match.get("sceneId") or "",
+            "Altura": match.get("height") or "",
+            "Ciclo": fixed_values["Ciclo"],
+            "ImagemLink": _scene_link(base_url, project_id, scene_id),
+            "Profissional": fixed_values["Profissional"],
+            "Finalidade": fixed_values["Finalidade"],
+            "DepartamentoSolicitante": fixed_values["DepartamentoSolicitante"],
+            "Situacao": fixed_values["Situacao"],
+        })
+    output = io.StringIO()
+    fieldnames = [
+        "OBJECTID",
+        "guid",
+        "Observação",
+        "Altura",
+        "Ciclo",
+        "ImagemLink",
+        "Profissional",
+        "Finalidade",
+        "DepartamentoSolicitante",
+        "Situacao",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue()
 
 
 def _create_project(tile_size: int, jpeg_quality: int, name: str | None = None, show_photo_names: bool = False) -> tuple[str, Path, dict]:
@@ -464,6 +747,87 @@ async def project_data(project_id: str):
     _backfill_missing_photo_metadata(project_dir, project)
     _sync_project_record(project_dir)
     return JSONResponse(project, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/projects/{project_id}/autorename/preview")
+async def autorename_project_preview(project_id: str, request: Request):
+    project_dir = _project_dir(project_id)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload invalido.")
+    preview = _autorename_preview(project_dir, payload)
+    return JSONResponse(preview, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/projects/{project_id}/autorename/apply")
+async def autorename_project_apply(project_id: str, request: Request):
+    project_dir = _project_dir(project_id)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload invalido.")
+    preview = _autorename_preview(project_dir, payload)
+    if preview["duplicatePointIds"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Mais de uma foto corresponde ao mesmo ponto: " + ", ".join(preview["duplicatePointIds"]),
+        )
+    project = _normalize_project(load_project(project_dir))
+    matches_by_scene_id = {
+        match["sceneId"]: match
+        for match in preview["matches"]
+        if match.get("matched") and match.get("newId")
+    }
+    old_to_new = {}
+    target_ids = []
+    for scene in project.get("scenes") or []:
+        match = matches_by_scene_id.get(scene.get("id"))
+        next_id = str(match["newId"]) if match else str(scene.get("id"))
+        target_ids.append(next_id)
+        if match:
+            old_to_new[str(scene.get("id"))] = next_id
+    duplicate_scene_ids = sorted({scene_id for scene_id in target_ids if target_ids.count(scene_id) > 1})
+    if duplicate_scene_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="A renomeacao geraria IDs duplicados: " + ", ".join(duplicate_scene_ids),
+        )
+    for scene in project.get("scenes") or []:
+        match = matches_by_scene_id.get(scene.get("id"))
+        if match:
+            scene["id"] = str(match["newId"])
+            scene["name"] = str(match["newName"])
+            metadata = scene.setdefault("metadata", {})
+            metadata["arcgisPointId"] = str(match["newId"])
+            metadata["arcgisMatchDistanceMeters"] = match.get("distanceMeters")
+            metadata["arcgisMatchedPoint"] = match.get("point")
+        for hotspot in scene.get("linkHotspots") or []:
+            target = str(hotspot.get("target"))
+            if target in old_to_new:
+                hotspot["target"] = old_to_new[target]
+    save_project(project_dir, project)
+    _touch(project_dir)
+    with _db_session() as session:
+        upsert_project_record(session, project=project, project_dir=project_dir, status="saved")
+    preview["project"] = project
+    return JSONResponse(preview, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/projects/{project_id}/autorename/export-csv")
+async def autorename_project_export_csv(project_id: str, request: Request):
+    project_dir = _project_dir(project_id)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload invalido.")
+    csv_text = _autorename_csv(project_id, project_dir, payload, str(request.base_url))
+    filename = f"autorename-matches-{project_id}.csv"
+    return Response(
+        csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @app.put("/api/projects/{project_id}")

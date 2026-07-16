@@ -9,6 +9,23 @@
   var progressText = document.getElementById("progressText");
   var progressBar = document.getElementById("progressBar");
   var viewReadout = document.getElementById("viewReadout");
+  var autorenameUrl = document.getElementById("autorenameUrl");
+  var autorenameDistance = document.getElementById("autorenameDistance");
+  var autorenameIdField = document.getElementById("autorenameIdField");
+  var autorenameCsvCiclo = document.getElementById("autorenameCsvCiclo");
+  var autorenameCsvProfissional = document.getElementById("autorenameCsvProfissional");
+  var autorenameCsvFinalidade = document.getElementById("autorenameCsvFinalidade");
+  var autorenameCsvDepartamento = document.getElementById("autorenameCsvDepartamento");
+  var autorenameCsvSituacao = document.getElementById("autorenameCsvSituacao");
+  var previewAutorename = document.getElementById("previewAutorename");
+  var applyAutorename = document.getElementById("applyAutorename");
+  var exportAutorenameCsv = document.getElementById("exportAutorenameCsv");
+  var autorenameStatus = document.getElementById("autorenameStatus");
+  var autorenameMap = document.getElementById("autorenameMap");
+  var autorenameMapTiles = document.getElementById("autorenameMapTiles");
+  var autorenameMapLines = document.getElementById("autorenameMapLines");
+  var autorenameMapMarkers = document.getElementById("autorenameMapMarkers");
+  var autorenameMatches = document.getElementById("autorenameMatches");
   var viewer;
   var project;
   var scenes = [];
@@ -18,12 +35,23 @@
   var hasPendingSave = false;
   var selectedHotspot = null;
   var placingHotspot = null;
+  var autorenamePreviewPayload = null;
+  var autorenameTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
 
   function requestJSON(url, options) {
     return fetch(url, options || {}).then(function (response) {
       return response.json().then(function (payload) {
         if (!response.ok) throw new Error(payload.detail || "Falha na requisicao.");
         return payload;
+      });
+    });
+  }
+
+  function requestBlob(url, options) {
+    return fetch(url, options || {}).then(function (response) {
+      if (response.ok) return response.blob();
+      return response.json().then(function (payload) {
+        throw new Error(payload.detail || "Falha na requisicao.");
       });
     });
   }
@@ -49,6 +77,196 @@
       scene.linkHotspots = Array.isArray(scene.linkHotspots) ? scene.linkHotspots : [];
     });
     return payload;
+  }
+
+  function setAutorenameStatus(message, isError) {
+    if (!autorenameStatus) return;
+    autorenameStatus.textContent = message;
+    autorenameStatus.classList.toggle("error", !!isError);
+  }
+
+  function autorenamePayload() {
+    return {
+      arcgisUrl: autorenameUrl.value.trim(),
+      maxDistanceMeters: Number(autorenameDistance.value || 15),
+      idField: autorenameIdField.value.trim() || "OBJECTID"
+    };
+  }
+
+  function fieldValue(element) {
+    return element ? element.value.trim() : "";
+  }
+
+  function autorenameCsvPayload() {
+    var payload = autorenamePayload();
+    payload.ciclo = fieldValue(autorenameCsvCiclo);
+    payload.profissional = fieldValue(autorenameCsvProfissional);
+    payload.finalidade = fieldValue(autorenameCsvFinalidade);
+    payload.departamentoSolicitante = fieldValue(autorenameCsvDepartamento);
+    payload.situacao = fieldValue(autorenameCsvSituacao);
+    return payload;
+  }
+
+  function setAutorenameLoading(isLoading) {
+    if (previewAutorename) previewAutorename.disabled = isLoading;
+    if (applyAutorename) applyAutorename.disabled = isLoading || !autorenamePreviewPayload || !autorenamePreviewPayload.matchedCount || (autorenamePreviewPayload.duplicatePointIds || []).length;
+    if (exportAutorenameCsv) exportAutorenameCsv.disabled = isLoading || !autorenamePreviewPayload || !autorenamePreviewPayload.matchedCount || (autorenamePreviewPayload.duplicatePointIds || []).length;
+  }
+
+  function lonToWorldX(lon, zoom) {
+    return ((lon + 180) / 360) * 256 * Math.pow(2, zoom);
+  }
+
+  function latToWorldY(lat, zoom) {
+    var sin = Math.sin(lat * Math.PI / 180);
+    sin = Math.min(Math.max(sin, -0.9999), 0.9999);
+    return (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * 256 * Math.pow(2, zoom);
+  }
+
+  function worldXToLon(x, zoom) {
+    return x / (256 * Math.pow(2, zoom)) * 360 - 180;
+  }
+
+  function worldYToLat(y, zoom) {
+    var n = Math.PI - 2 * Math.PI * y / (256 * Math.pow(2, zoom));
+    return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  }
+
+  function chooseAutorenameMapZoom(points, width, height) {
+    if (points.length <= 1) return 17;
+    for (var zoom = 18; zoom >= 2; zoom--) {
+      var xs = points.map(function (point) { return lonToWorldX(point.longitude, zoom); });
+      var ys = points.map(function (point) { return latToWorldY(point.latitude, zoom); });
+      var spanX = Math.max.apply(null, xs) - Math.min.apply(null, xs);
+      var spanY = Math.max.apply(null, ys) - Math.min.apply(null, ys);
+      if (spanX <= width - 42 && spanY <= height - 42) return zoom;
+    }
+    return 2;
+  }
+
+  function autorenameTileUrl(level, col, row) {
+    return autorenameTileUrlTemplate
+      .replace("{level}", level)
+      .replace("{col}", col)
+      .replace("{row}", row);
+  }
+
+  function renderAutorenameMap(matches) {
+    if (!autorenameMap || !autorenameMapTiles || !autorenameMapLines || !autorenameMapMarkers) return;
+    var points = [];
+    matches.forEach(function (match) {
+      if (match.photo) points.push({ type: "photo", latitude: match.photo.latitude, longitude: match.photo.longitude, match: match });
+      if (match.point && match.matched) points.push({ type: "point", latitude: match.point.latitude, longitude: match.point.longitude, match: match });
+    });
+    autorenameMap.hidden = !points.length;
+    autorenameMapTiles.innerHTML = "";
+    autorenameMapLines.innerHTML = "";
+    autorenameMapMarkers.innerHTML = "";
+    if (!points.length) return;
+
+    var width = autorenameMap.clientWidth || 320;
+    var height = autorenameMap.clientHeight || 260;
+    var centerX18 = points.reduce(function (sum, point) { return sum + lonToWorldX(point.longitude, 18); }, 0) / points.length;
+    var centerY18 = points.reduce(function (sum, point) { return sum + latToWorldY(point.latitude, 18); }, 0) / points.length;
+    var zoom = chooseAutorenameMapZoom(points, width, height);
+    var centerLon = worldXToLon(centerX18 / Math.pow(2, 18 - zoom), zoom);
+    var centerLat = worldYToLat(centerY18 / Math.pow(2, 18 - zoom), zoom);
+    var centerX = lonToWorldX(centerLon, zoom);
+    var centerY = latToWorldY(centerLat, zoom);
+    var left = centerX - width / 2;
+    var top = centerY - height / 2;
+    var minCol = Math.floor(left / 256);
+    var maxCol = Math.floor((left + width) / 256);
+    var minRow = Math.floor(top / 256);
+    var maxRow = Math.floor((top + height) / 256);
+    var tileCount = Math.pow(2, zoom);
+
+    for (var row = minRow; row <= maxRow; row++) {
+      if (row < 0 || row >= tileCount) continue;
+      for (var col = minCol; col <= maxCol; col++) {
+        var wrappedCol = ((col % tileCount) + tileCount) % tileCount;
+        var image = document.createElement("img");
+        image.alt = "";
+        image.src = autorenameTileUrl(zoom, wrappedCol, row);
+        image.style.left = Math.round(col * 256 - left) + "px";
+        image.style.top = Math.round(row * 256 - top) + "px";
+        autorenameMapTiles.appendChild(image);
+      }
+    }
+
+    function screenPoint(point) {
+      return {
+        x: lonToWorldX(point.longitude, zoom) - left,
+        y: latToWorldY(point.latitude, zoom) - top
+      };
+    }
+
+    autorenameMapLines.setAttribute("viewBox", "0 0 " + width + " " + height);
+    autorenameMapLines.setAttribute("width", width);
+    autorenameMapLines.setAttribute("height", height);
+    matches.forEach(function (match) {
+      if (!match.matched || !match.photo || !match.point) return;
+      var photo = screenPoint(match.photo);
+      var point = screenPoint(match.point);
+      var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", photo.x.toFixed(1));
+      line.setAttribute("y1", photo.y.toFixed(1));
+      line.setAttribute("x2", point.x.toFixed(1));
+      line.setAttribute("y2", point.y.toFixed(1));
+      autorenameMapLines.appendChild(line);
+    });
+    points.forEach(function (point) {
+      var marker = document.createElement("span");
+      var screen = screenPoint(point);
+      marker.className = "autorename-marker " + point.type + (point.match.matched ? "" : " unmatched");
+      marker.style.left = Math.round(screen.x) + "px";
+      marker.style.top = Math.round(screen.y) + "px";
+      marker.title = point.type === "photo"
+        ? "Foto: " + (point.match.sourceFile || point.match.sceneName || point.match.sceneId)
+        : "Ponto ArcGIS: " + point.match.point.id;
+      autorenameMapMarkers.appendChild(marker);
+    });
+  }
+
+  function renderAutorenameMatches(payload) {
+    if (!autorenameMatches) return;
+    autorenameMatches.innerHTML = "";
+    (payload.matches || []).forEach(function (match) {
+      var item = document.createElement("div");
+      item.className = "autorename-match" + (match.matched ? "" : " unmatched");
+      var title = document.createElement("strong");
+      var detail = document.createElement("span");
+      var file = document.createElement("span");
+      title.textContent = match.matched
+        ? (match.sourceFile || match.sceneName || match.sceneId) + " -> " + match.newName
+        : (match.sourceFile || match.sceneName || match.sceneId);
+      detail.textContent = match.matched
+        ? "Ponto " + match.point.id + " | " + match.distanceMeters.toFixed(2) + " m"
+        : (match.reason || "Sem match");
+      file.textContent = match.matched ? "Novo ID: " + match.newId : "";
+      item.appendChild(title);
+      item.appendChild(detail);
+      if (file.textContent) item.appendChild(file);
+      autorenameMatches.appendChild(item);
+    });
+  }
+
+  function renderAutorenamePreview(payload) {
+    autorenamePreviewPayload = payload;
+    var duplicateIds = payload.duplicatePointIds || [];
+    var status = payload.matchedCount + " de " + payload.sceneCount + " cenas com match em " + payload.pointCount + " pontos ArcGIS.";
+    if (duplicateIds.length) {
+      status += " Pontos duplicados: " + duplicateIds.join(", ") + ".";
+    }
+    setAutorenameStatus(status, !!duplicateIds.length);
+    if (applyAutorename) {
+      applyAutorename.disabled = !payload.matchedCount || !!duplicateIds.length;
+    }
+    if (exportAutorenameCsv) {
+      exportAutorenameCsv.disabled = !payload.matchedCount || !!duplicateIds.length;
+    }
+    renderAutorenameMatches(payload);
+    renderAutorenameMap(payload.matches || []);
   }
 
   function markDirty(options) {
@@ -337,6 +555,101 @@
     markDirty({ immediate: true });
     rebuildViewer();
   });
+
+  if (previewAutorename) {
+    previewAutorename.addEventListener("click", function () {
+      if (!autorenameUrl.value.trim()) {
+        setAutorenameStatus("Informe a URL GeoJSON do ArcGIS.", true);
+        return;
+      }
+      setAutorenameStatus("Consultando ArcGIS e calculando proximidade...");
+      setAutorenameLoading(true);
+      saveProject()
+        .then(function () {
+          return requestJSON("/api/projects/" + projectId + "/autorename/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(autorenamePayload())
+          });
+        })
+        .then(function (payload) {
+          renderAutorenamePreview(payload);
+        })
+        .catch(function (error) {
+          autorenamePreviewPayload = null;
+          if (applyAutorename) applyAutorename.disabled = true;
+          if (exportAutorenameCsv) exportAutorenameCsv.disabled = true;
+          setAutorenameStatus(error.message, true);
+        })
+        .finally(function () {
+          setAutorenameLoading(false);
+        });
+    });
+  }
+
+  if (applyAutorename) {
+    applyAutorename.addEventListener("click", function () {
+      if (!autorenamePreviewPayload || !autorenamePreviewPayload.matchedCount) return;
+      if (!confirm("Aplicar IDs e nomes dos pontos ArcGIS nas cenas com match?")) return;
+      setAutorenameStatus("Aplicando renomeacao...");
+      setAutorenameLoading(true);
+      saveProject()
+        .then(function () {
+          return requestJSON("/api/projects/" + projectId + "/autorename/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(autorenamePayload())
+          });
+        })
+        .then(function (payload) {
+          project = normalizeProject(payload.project);
+          currentIndex = Math.min(currentIndex, Math.max(0, project.scenes.length - 1));
+          rebuildViewer();
+          renderAutorenamePreview(payload);
+          saveState.textContent = "Salvo";
+          setAutorenameStatus("Renomeacao aplicada em " + payload.matchedCount + " cenas.");
+        })
+        .catch(function (error) {
+          setAutorenameStatus(error.message, true);
+        })
+        .finally(function () {
+          setAutorenameLoading(false);
+        });
+    });
+  }
+
+  if (exportAutorenameCsv) {
+    exportAutorenameCsv.addEventListener("click", function () {
+      if (!autorenamePreviewPayload || !autorenamePreviewPayload.matchedCount) return;
+      setAutorenameStatus("Gerando CSV dos matches...");
+      setAutorenameLoading(true);
+      saveProject()
+        .then(function () {
+          return requestBlob("/api/projects/" + projectId + "/autorename/export-csv", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(autorenameCsvPayload())
+          });
+        })
+        .then(function (blob) {
+          var objectUrl = URL.createObjectURL(blob);
+          var link = document.createElement("a");
+          link.href = objectUrl;
+          link.download = "autorename-matches-" + projectId + ".csv";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1000);
+          setAutorenameStatus("CSV gerado com " + autorenamePreviewPayload.matchedCount + " matches.");
+        })
+        .catch(function (error) {
+          setAutorenameStatus(error.message, true);
+        })
+        .finally(function () {
+          setAutorenameLoading(false);
+        });
+    });
+  }
 
   document.getElementById("addFiles").addEventListener("change", function (event) {
     if (!event.target.files.length) return;

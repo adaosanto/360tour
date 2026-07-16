@@ -23,6 +23,48 @@
         </label>
       </section>
 
+      <section class="autorename-panel">
+        <h2>Autorename ArcGIS</h2>
+        <label>URL GeoJSON
+          <textarea id="autorenameUrl" rows="4" placeholder="Cole a URL /query do ArcGIS com f=pgeojson"></textarea>
+        </label>
+        <div class="autorename-grid">
+          <label>Distancia max. (m)
+            <input id="autorenameDistance" type="number" min="1" step="1" value="15">
+          </label>
+          <label>Campo ID
+            <input id="autorenameIdField" type="text" value="OBJECTID">
+          </label>
+          <label>Ciclo
+            <input id="autorenameCsvCiclo" type="text">
+          </label>
+          <label>Profissional
+            <input id="autorenameCsvProfissional" type="text">
+          </label>
+          <label>Finalidade
+            <input id="autorenameCsvFinalidade" type="text">
+          </label>
+          <label>Departamento solicitante
+            <input id="autorenameCsvDepartamento" type="text">
+          </label>
+          <label>Situacao
+            <input id="autorenameCsvSituacao" type="text">
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="previewAutorename" type="button">Preview</button>
+          <button id="applyAutorename" type="button" disabled>Aplicar</button>
+          <button id="exportAutorenameCsv" type="button" disabled>CSV</button>
+        </div>
+        <p id="autorenameStatus" class="autorename-status">Informe a URL do ArcGIS para calcular os matches.</p>
+        <div id="autorenameMap" class="autorename-map" hidden>
+          <div id="autorenameMapTiles" class="autorename-map-tiles"></div>
+          <svg id="autorenameMapLines" class="autorename-map-lines" aria-hidden="true"></svg>
+          <div id="autorenameMapMarkers" class="autorename-map-markers"></div>
+        </div>
+        <div id="autorenameMatches" class="autorename-matches"></div>
+      </section>
+
       <section>
         <h2>Cena atual</h2>
         <label>Nome <input id="sceneName" type="text"></label>
@@ -84,6 +126,6 @@
   </div>
 
   <script src="/static/marzipano.js"></script>
-  <script src="/static/editor.js?v=project-editor-3"></script>
+  <script src="/static/editor.js?v=project-editor-5"></script>
 </body>
 </html>
