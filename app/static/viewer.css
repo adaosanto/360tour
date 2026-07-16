@@ -208,6 +208,32 @@ button {
   font-size: 13px;
 }
 
+.viewer-watermark {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 7px;
+  background: rgba(9, 14, 19, 0.28);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 16px;
+  opacity: 0.58;
+  pointer-events: none;
+  text-align: center;
+  text-shadow: 0 2px 7px rgba(0, 0, 0, 0.5);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
 #sceneList {
   position: absolute;
   top: 82px;
@@ -666,6 +692,14 @@ button {
   .metadata-toggle {
     min-width: 50px;
     font-size: 12px;
+  }
+
+  .viewer-watermark {
+    bottom: 10px;
+    min-height: 30px;
+    padding: 7px 10px;
+    font-size: 11px;
+    opacity: 0.52;
   }
 
   #sceneList {

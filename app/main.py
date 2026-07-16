@@ -5,6 +5,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import time
 import urllib.error
@@ -32,6 +33,16 @@ TEMP_DIR = STORAGE_DIR
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 TTL_HOURS = float(os.getenv("TEMP_PROJECT_TTL_HOURS", "24"))
+ARCGIS_TOKEN_URL = os.getenv("ARCGIS_TOKEN_URL", "http://192.168.173.99:8090/api/sma/token/")
+ARCGIS_360_QUERY_URL = os.getenv(
+    "ARCGIS_360_QUERY_URL",
+    "https://services8.arcgis.com/MRbkurfLm8nmQrDq/ArcGIS/rest/services/Imagens_360/FeatureServer/0/query",
+)
+ARCGIS_360_ID_FIELD = os.getenv("ARCGIS_360_ID_FIELD", "OBJECTID")
+CSV_VIEW_URL_DEFAULT = os.getenv(
+    "CSV_VIEW_URL_DEFAULT",
+    "https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/",
+)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = make_database_url(TEMP_DIR, os.getenv("DATABASE_URL"))
 SessionLocal = build_session_factory(DATABASE_URL)
@@ -42,6 +53,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/project-files", StaticFiles(directory=TEMP_DIR), name="project-files")
 
 progress_state: dict[str, dict] = {}
+arcgis_token_cache: dict[str, str | float] = {}
 
 DEFAULT_PROJECT_SETTINGS = {
     "autorotate": False,
@@ -280,33 +292,80 @@ def _guid_identifier(properties: dict) -> str:
     return _property_identifier(properties, candidates) or ""
 
 
-def _arcgis_geojson_url(arcgis_url: str) -> str:
+def _fetch_arcgis_token() -> str:
+    now = time.time()
+    cached_token = str(arcgis_token_cache.get("token") or "").strip()
+    cached_expires = _as_number(arcgis_token_cache.get("expires")) or 0
+    if cached_token and cached_expires - 60 > now:
+        return cached_token
+
+    request = urllib.request.Request(ARCGIS_TOKEN_URL, headers={"User-Agent": "MarzipanoClone/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read(1024 * 1024)
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Servico de token retornou HTTP {exc.code}.") from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Nao foi possivel buscar token ArcGIS: {exc.reason}") from exc
+
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Resposta do servico de token nao e um JSON valido.") from exc
+
+    token = str(payload.get("token") or "").strip() if isinstance(payload, dict) else ""
+    expires = _as_number(payload.get("expires")) if isinstance(payload, dict) else None
+    if not token:
+        raise HTTPException(status_code=502, detail="Servico de token nao retornou token ArcGIS.")
+
+    arcgis_token_cache["token"] = token
+    arcgis_token_cache["expires"] = expires or (now + 300)
+    return token
+
+
+def _arcgis_geojson_url(arcgis_url: str, token: str) -> str:
     parts = urllib.parse.urlsplit(arcgis_url)
     query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
     normalized = []
+    has_where = False
     has_out_fields = False
     has_format = False
+    has_return_geometry = False
     for key, value in query:
         lower_key = key.lower()
-        if lower_key == "outfields":
+        if lower_key == "token":
+            continue
+        if lower_key == "where":
+            has_where = True
+            normalized.append((key, value or "1=1"))
+        elif lower_key == "outfields":
             has_out_fields = True
             normalized.append((key, "*"))
         elif lower_key == "f":
             has_format = True
             normalized.append((key, "pgeojson"))
+        elif lower_key == "returngeometry":
+            has_return_geometry = True
+            normalized.append((key, "true"))
         else:
             normalized.append((key, value))
+    if not has_where:
+        normalized.append(("where", "1=1"))
     if not has_out_fields:
         normalized.append(("outFields", "*"))
+    if not has_return_geometry:
+        normalized.append(("returnGeometry", "true"))
     if not has_format:
         normalized.append(("f", "pgeojson"))
+    normalized.append(("token", token))
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(normalized), parts.fragment))
 
 
-def _fetch_geojson_points(arcgis_url: str, id_field: str) -> list[dict]:
-    if not arcgis_url or not arcgis_url.lower().startswith(("https://", "http://")):
-        raise HTTPException(status_code=400, detail="Informe uma URL HTTP/HTTPS valida do ArcGIS.")
-    request = urllib.request.Request(_arcgis_geojson_url(arcgis_url), headers={"User-Agent": "MarzipanoClone/1.0"})
+def _fetch_geojson_points() -> list[dict]:
+    if not ARCGIS_360_QUERY_URL.lower().startswith(("https://", "http://")):
+        raise HTTPException(status_code=500, detail="ARCGIS_360_QUERY_URL invalida.")
+    token = _fetch_arcgis_token()
+    request = urllib.request.Request(_arcgis_geojson_url(ARCGIS_360_QUERY_URL, token), headers={"User-Agent": "MarzipanoClone/1.0"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read(20 * 1024 * 1024)
@@ -330,7 +389,7 @@ def _fetch_geojson_points(arcgis_url: str, id_field: str) -> list[dict]:
             continue
         coordinates = _feature_point_coordinates(feature)
         properties = feature.get("properties") or {}
-        point_id = _point_identifier(properties, id_field)
+        point_id = _point_identifier(properties, ARCGIS_360_ID_FIELD)
         if coordinates and point_id:
             points.append({
                 "id": point_id,
@@ -350,13 +409,22 @@ def _scene_height(scene: dict):
     return ""
 
 
-def _autorename_payload_options(payload: dict) -> tuple[str, float, str]:
-    arcgis_url = str(payload.get("arcgisUrl") or "").strip()
+def _scene_year(scene: dict) -> str:
+    metadata = scene.get("metadata") or {}
+    candidates = [metadata.get("takenAt"), metadata.get("dateTime"), metadata.get("date")]
+    candidates.extend([scene.get("sourceFile"), scene.get("name"), scene.get("id")])
+    for value in candidates:
+        match = re.search(r"\b(20\d{2}|19\d{2})\b", str(value or ""))
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _autorename_payload_options(payload: dict) -> float:
     max_distance = _as_number(payload.get("maxDistanceMeters"))
-    id_field = str(payload.get("idField") or "OBJECTID").strip() or "OBJECTID"
     if max_distance is None or max_distance <= 0:
         raise HTTPException(status_code=400, detail="Distancia maxima deve ser maior que zero.")
-    return arcgis_url, max_distance, id_field
+    return max_distance
 
 
 def _build_autorename_matches(project: dict, points: list[dict], max_distance: float) -> list[dict]:
@@ -369,6 +437,7 @@ def _build_autorename_matches(project: dict, points: list[dict], max_distance: f
                 "sceneName": scene.get("name"),
                 "sourceFile": scene.get("sourceFile"),
                 "height": _scene_height(scene),
+                "year": _scene_year(scene),
                 "matched": False,
                 "reason": "Cena sem coordenadas GPS.",
             })
@@ -384,6 +453,7 @@ def _build_autorename_matches(project: dict, points: list[dict], max_distance: f
                 "sceneName": scene.get("name"),
                 "sourceFile": scene.get("sourceFile"),
                 "height": _scene_height(scene),
+                "year": _scene_year(scene),
                 "photo": {"latitude": scene_point[0], "longitude": scene_point[1]},
                 "matched": False,
                 "reason": "Nenhum ponto ArcGIS retornado.",
@@ -395,6 +465,7 @@ def _build_autorename_matches(project: dict, points: list[dict], max_distance: f
             "sceneName": scene.get("name"),
             "sourceFile": scene.get("sourceFile"),
             "height": _scene_height(scene),
+            "year": _scene_year(scene),
             "photo": {"latitude": scene_point[0], "longitude": scene_point[1]},
             "point": {"id": best["id"], "guid": best.get("guid") or "", "latitude": best["latitude"], "longitude": best["longitude"]},
             "distanceMeters": round(best["distanceMeters"], 2),
@@ -407,10 +478,10 @@ def _build_autorename_matches(project: dict, points: list[dict], max_distance: f
 
 
 def _autorename_preview(project_dir: Path, payload: dict) -> dict:
-    arcgis_url, max_distance, id_field = _autorename_payload_options(payload)
+    max_distance = _autorename_payload_options(payload)
     project = _normalize_project(load_project(project_dir))
     _backfill_missing_photo_metadata(project_dir, project)
-    points = _fetch_geojson_points(arcgis_url, id_field)
+    points = _fetch_geojson_points()
     matches = _build_autorename_matches(project, points, max_distance)
     matched_count = sum(1 for match in matches if match.get("matched"))
     duplicate_ids = sorted({
@@ -432,10 +503,29 @@ def _csv_payload_value(payload: dict, key: str) -> str:
     return str(payload.get(key) or "").strip()
 
 
-def _scene_link(base_url: str, project_id: str, scene_id: str) -> str:
+def _csv_view_url(payload: dict) -> str:
+    return _csv_payload_value(payload, "viewUrl") or CSV_VIEW_URL_DEFAULT
+
+
+def _scene_link(view_url: str, project_id: str, scene_id: str) -> str:
     quoted_project = urllib.parse.quote(project_id, safe="")
     quoted_scene = urllib.parse.quote(str(scene_id), safe="")
-    return f"{base_url.rstrip('/')}/view/{quoted_project}/{quoted_scene}"
+    replacements = {
+        "{projectid}": quoted_project,
+        "{projectId}": quoted_project,
+        "{project_id}": quoted_project,
+        "{photoId}": quoted_scene,
+        "{photoid}": quoted_scene,
+        "{sceneId}": quoted_scene,
+        "{sceneid}": quoted_scene,
+    }
+    if any(token in view_url for token in replacements):
+        link = view_url
+        for token, value in replacements.items():
+            link = link.replace(token, value)
+        return link
+    separator = "&" if "?" in view_url else "?"
+    return f"{view_url.rstrip('/')}/{quoted_project}/{quoted_scene}{separator}showBtnList=false"
 
 
 def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url: str) -> str:
@@ -453,6 +543,7 @@ def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url:
         "DepartamentoSolicitante": _csv_payload_value(payload, "departamentoSolicitante"),
         "Situacao": _csv_payload_value(payload, "situacao"),
     }
+    view_url = _csv_view_url(payload)
     for match in preview["matches"]:
         if not match.get("matched"):
             continue
@@ -463,8 +554,9 @@ def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url:
             "guid": point.get("guid") or "",
             "Observação": match.get("sourceFile") or match.get("sceneName") or match.get("sceneId") or "",
             "Altura": match.get("height") or "",
+            "Ano": match.get("year") or "",
             "Ciclo": fixed_values["Ciclo"],
-            "ImagemLink": _scene_link(base_url, project_id, scene_id),
+            "ImagemLink": _scene_link(view_url, project_id, scene_id),
             "Profissional": fixed_values["Profissional"],
             "Finalidade": fixed_values["Finalidade"],
             "DepartamentoSolicitante": fixed_values["DepartamentoSolicitante"],
@@ -476,6 +568,7 @@ def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url:
         "guid",
         "Observação",
         "Altura",
+        "Ano",
         "Ciclo",
         "ImagemLink",
         "Profissional",

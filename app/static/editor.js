@@ -9,9 +9,8 @@
   var progressText = document.getElementById("progressText");
   var progressBar = document.getElementById("progressBar");
   var viewReadout = document.getElementById("viewReadout");
-  var autorenameUrl = document.getElementById("autorenameUrl");
   var autorenameDistance = document.getElementById("autorenameDistance");
-  var autorenameIdField = document.getElementById("autorenameIdField");
+  var autorenameCsvViewUrl = document.getElementById("autorenameCsvViewUrl");
   var autorenameCsvCiclo = document.getElementById("autorenameCsvCiclo");
   var autorenameCsvProfissional = document.getElementById("autorenameCsvProfissional");
   var autorenameCsvFinalidade = document.getElementById("autorenameCsvFinalidade");
@@ -87,9 +86,7 @@
 
   function autorenamePayload() {
     return {
-      arcgisUrl: autorenameUrl.value.trim(),
-      maxDistanceMeters: Number(autorenameDistance.value || 15),
-      idField: autorenameIdField.value.trim() || "OBJECTID"
+      maxDistanceMeters: Number(autorenameDistance.value || 15)
     };
   }
 
@@ -99,6 +96,7 @@
 
   function autorenameCsvPayload() {
     var payload = autorenamePayload();
+    payload.viewUrl = fieldValue(autorenameCsvViewUrl);
     payload.ciclo = fieldValue(autorenameCsvCiclo);
     payload.profissional = fieldValue(autorenameCsvProfissional);
     payload.finalidade = fieldValue(autorenameCsvFinalidade);
@@ -558,11 +556,7 @@
 
   if (previewAutorename) {
     previewAutorename.addEventListener("click", function () {
-      if (!autorenameUrl.value.trim()) {
-        setAutorenameStatus("Informe a URL GeoJSON do ArcGIS.", true);
-        return;
-      }
-      setAutorenameStatus("Consultando ArcGIS e calculando proximidade...");
+      setAutorenameStatus("Consultando ArcGIS no servidor e calculando proximidade...");
       setAutorenameLoading(true);
       saveProject()
         .then(function () {
@@ -684,10 +678,13 @@
     }).catch(function () {});
   });
 
-  document.getElementById("deleteProject").addEventListener("click", function () {
-    if (!confirm("Excluir o projeto temporario?")) return;
-    fetch("/api/projects/" + projectId, { method: "DELETE" }).then(function () { window.location.href = "/"; });
-  });
+  var deleteProject = document.getElementById("deleteProject");
+  if (deleteProject) {
+    deleteProject.addEventListener("click", function () {
+      if (!confirm("Excluir o projeto temporario?")) return;
+      fetch("/api/projects/" + projectId, { method: "DELETE" }).then(function () { window.location.href = "/"; });
+    });
+  }
 
   function updateReadout() {
     var activeView = viewer ? viewer.view() : null;
@@ -701,12 +698,13 @@
   function loadProject() {
     return requestJSON("/api/projects/" + projectId).then(function (payload) {
       project = normalizeProject(payload);
+      saveState.textContent = "Salvo";
       if (!viewer) {
+        renderCurrentSceneForm();
+        renderSceneList();
         initViewer();
         updateReadout();
         buildScenes();
-        renderCurrentSceneForm();
-        renderSceneList();
         if (project.scenes.length) {
           switchScene(currentIndex);
         }
@@ -716,6 +714,9 @@
       pollInitialProgress();
     }).catch(function (error) {
       saveState.textContent = error.message;
+      progressBox.hidden = false;
+      progressText.textContent = error.message;
+      progressBar.value = 0;
     });
   }
 

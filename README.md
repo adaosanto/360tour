@@ -62,6 +62,21 @@ http://127.0.0.1:8002/view.php/{project_id}/{scene_id}
 
 O `view.php` le o mesmo storage de projetos. Use `STORAGE_DIR` se os projetos estiverem fora de `app/temp`, e `STATIC_URL` se os arquivos estaticos forem servidos por outro caminho.
 
+## ArcGIS autorename
+
+O autorename busca pontos 360 no backend. O browser envia apenas a distancia de match e os campos do CSV; token e URL da query nao saem para o cliente.
+
+Configure, se necessario:
+
+```bash
+export ARCGIS_TOKEN_URL=http://192.168.173.99:8090/api/sma/token/
+export ARCGIS_360_QUERY_URL=https://services8.arcgis.com/MRbkurfLm8nmQrDq/ArcGIS/rest/services/Imagens_360/FeatureServer/0/query
+export ARCGIS_360_ID_FIELD=OBJECTID
+export CSV_VIEW_URL_DEFAULT=https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/
+```
+
+No CSV, `ImagemLink` usa a URL de view informada no editor. Sem template, a base vira `{base}/{project_id}/{photo_id}?showBtnList=false`. O campo `Ano` e extraido da data da foto.
+
 ## Endpoints
 
 - `POST /api/projects` cria um projeto temporario; aceita `project_name`, `thumbnail`, `tile_size` e `jpeg_quality`.
