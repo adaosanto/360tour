@@ -28,6 +28,10 @@
   var mapDrag = null;
   var cameraDirectionFrame = null;
 
+  function isMapViewConeEnabled() {
+    return data.settings.showMapViewCone !== false;
+  }
+
   function createInfoHotspot(hotspot) {
     var element = document.createElement("button");
     element.type = "button";
@@ -339,7 +343,7 @@
       marker.style.left = Math.round(lonToWorldX(point.lon, zoom) - left) + "px";
       marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
       marker.title = details.length ? details.join(" | ") : "Abrir foto";
-      if (point.scene.data.id === currentSceneId) {
+      if (point.scene.data.id === currentSceneId && isMapViewConeEnabled()) {
         marker.appendChild(createViewDirectionElement());
       }
       marker.addEventListener("click", function () {
@@ -351,6 +355,7 @@
   }
 
   function updateCameraDirectionIndicator() {
+    if (!isMapViewConeEnabled()) return;
     if (!currentScene || !mapMarkers) return;
     var indicator = mapMarkers.querySelector(".map-view-direction");
     if (!indicator) return;
@@ -451,6 +456,7 @@
   document.body.classList.toggle("hide-controls", data.settings.controls === false);
   document.body.classList.toggle("hide-fullscreen", data.settings.fullscreen === false);
   document.body.classList.toggle("hide-scenes", data.settings.sceneList === false);
+  document.body.classList.toggle("hide-map-view-cone", !isMapViewConeEnabled());
   if (data.settings.sceneList !== false) sceneList.classList.add("open");
   if (scenes[0]) switchScene(scenes[0]);
 })();

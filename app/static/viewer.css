@@ -188,6 +188,12 @@ button {
   color: #fff;
 }
 
+.header-button:disabled,
+.header-button.is-loading {
+  cursor: wait;
+  opacity: 0.74;
+}
+
 .scene-list-toggle {
   width: 42px;
   font-size: 18px;
@@ -216,6 +222,10 @@ button {
 .print-button {
   min-width: 52px;
   font-size: 13px;
+}
+
+.print-button.is-loading {
+  min-width: 96px;
 }
 
 .annotation-overlay,
@@ -584,6 +594,11 @@ button {
   transform-origin: 0 0;
 }
 
+.hide-map-view-cone .map-view-direction,
+.hide-map-view-cone .print-map-view {
+  display: none;
+}
+
 .map-view-cone {
   position: absolute;
   left: 0;
@@ -927,6 +942,13 @@ button {
 
 .print-pano-live canvas {
   display: block;
+}
+
+.print-pano-snapshot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .print-fallback {

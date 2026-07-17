@@ -175,6 +175,10 @@ button {
   transform-origin: 0 0;
 }
 
+.hide-map-view-cone .map-view-direction {
+  display: none;
+}
+
 .map-view-cone {
   position: absolute;
   left: 0;

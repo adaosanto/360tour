@@ -62,6 +62,7 @@ DEFAULT_PROJECT_SETTINGS = {
     "sceneList": True,
     "mouseViewMode": "drag",
     "showPhotoNames": False,
+    "showMapViewCone": True,
     "saveOriginalPhotos": True,
 }
 
@@ -104,7 +105,7 @@ def _normalize_project_settings(settings: dict | None) -> dict:
     normalized = DEFAULT_PROJECT_SETTINGS.copy()
     if isinstance(settings, dict):
         normalized.update(settings)
-    for key in ("autorotate", "controls", "fullscreen", "sceneList", "showPhotoNames", "saveOriginalPhotos"):
+    for key in ("autorotate", "controls", "fullscreen", "sceneList", "showPhotoNames", "showMapViewCone", "saveOriginalPhotos"):
         normalized[key] = _coerce_bool(normalized.get(key), DEFAULT_PROJECT_SETTINGS[key])
     if normalized.get("mouseViewMode") not in {"drag", "qtvr"}:
         normalized["mouseViewMode"] = "drag"
@@ -276,8 +277,16 @@ def _identifier_text(value) -> str | None:
 
 
 def _property_identifier(properties: dict, candidates: list[str]) -> str | None:
+    normalized_properties = {
+        re.sub(r"[^a-z0-9]", "", str(key).lower()): value
+        for key, value in properties.items()
+    }
     for field in candidates:
         identifier = _identifier_text(properties.get(field))
+        if identifier:
+            return identifier
+        normalized_field = re.sub(r"[^a-z0-9]", "", str(field).lower())
+        identifier = _identifier_text(normalized_properties.get(normalized_field))
         if identifier:
             return identifier
     return None
@@ -289,7 +298,18 @@ def _point_identifier(properties: dict, id_field: str) -> str | None:
 
 
 def _guid_identifier(properties: dict) -> str:
-    candidates = ["globalid", "GlobalID", "GLOBALID", "GlobalId", "global_id", "guid", "GUID"]
+    candidates = [
+        "GlobalID",
+        "globalId",
+        "globalID",
+        "GLOBALID",
+        "GlobalId",
+        "globalid",
+        "global_id",
+        "GLOBAL_ID",
+        "guid",
+        "GUID",
+    ]
     return _property_identifier(properties, candidates) or ""
 
 
@@ -421,6 +441,26 @@ def _scene_year(scene: dict) -> str:
     return ""
 
 
+def _scene_realization_date(scene: dict) -> str:
+    metadata = scene.get("metadata") or {}
+    candidates = [metadata.get("takenAt"), metadata.get("dateTime"), metadata.get("date")]
+    candidates.extend([scene.get("sourceFile"), scene.get("name"), scene.get("id")])
+    for value in candidates:
+        text = str(value or "")
+        match = re.search(r"\b(20\d{2}|19\d{2})[:/-](\d{2})[:/-](\d{2})\b", text)
+        if match:
+            return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    return ""
+
+
+def _csv_guid(value) -> str:
+    guid = str(value or "").strip()
+    if not guid:
+        return ""
+    guid = guid.strip("{}")
+    return f"{{{guid}}}"
+
+
 def _autorename_payload_options(payload: dict) -> float:
     max_distance = _as_number(payload.get("maxDistanceMeters"))
     if max_distance is None or max_distance <= 0:
@@ -439,6 +479,7 @@ def _build_autorename_matches(project: dict, points: list[dict], max_distance: f
                 "sourceFile": scene.get("sourceFile"),
                 "height": _scene_height(scene),
                 "year": _scene_year(scene),
+                "realizationDate": _scene_realization_date(scene),
                 "matched": False,
                 "reason": "Cena sem coordenadas GPS.",
             })
@@ -455,6 +496,7 @@ def _build_autorename_matches(project: dict, points: list[dict], max_distance: f
                 "sourceFile": scene.get("sourceFile"),
                 "height": _scene_height(scene),
                 "year": _scene_year(scene),
+                "realizationDate": _scene_realization_date(scene),
                 "photo": {"latitude": scene_point[0], "longitude": scene_point[1]},
                 "matched": False,
                 "reason": "Nenhum ponto ArcGIS retornado.",
@@ -467,6 +509,7 @@ def _build_autorename_matches(project: dict, points: list[dict], max_distance: f
             "sourceFile": scene.get("sourceFile"),
             "height": _scene_height(scene),
             "year": _scene_year(scene),
+            "realizationDate": _scene_realization_date(scene),
             "photo": {"latitude": scene_point[0], "longitude": scene_point[1]},
             "point": {"id": best["id"], "guid": best.get("guid") or "", "latitude": best["latitude"], "longitude": best["longitude"]},
             "distanceMeters": round(best["distanceMeters"], 2),
@@ -552,10 +595,11 @@ def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url:
         scene_id = str(match.get("newId") or match.get("sceneId") or "")
         rows.append({
             "OBJECTID": point.get("id") or match.get("newId") or "",
-            "guid": point.get("guid") or "",
+            "guid": _csv_guid(point.get("guid")),
             "Observação": match.get("sourceFile") or match.get("sceneName") or match.get("sceneId") or "",
             "Altura": match.get("height") or "",
             "Ano": match.get("year") or "",
+            "DataRealizacao": match.get("realizationDate") or "",
             "Ciclo": fixed_values["Ciclo"],
             "ImagemLink": _scene_link(view_url, project_id, scene_id),
             "Profissional": fixed_values["Profissional"],
@@ -570,6 +614,7 @@ def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url:
         "Observação",
         "Altura",
         "Ano",
+        "DataRealizacao",
         "Ciclo",
         "ImagemLink",
         "Profissional",
@@ -972,6 +1017,7 @@ async def autorename_project_apply(project_id: str, request: Request):
             scene["name"] = str(match["newName"])
             metadata = scene.setdefault("metadata", {})
             metadata["arcgisPointId"] = str(match["newId"])
+            metadata["arcgisPointGlobalId"] = (match.get("point") or {}).get("guid") or ""
             metadata["arcgisMatchDistanceMeters"] = match.get("distanceMeters")
             metadata["arcgisMatchedPoint"] = match.get("point")
         for hotspot in scene.get("linkHotspots") or []:

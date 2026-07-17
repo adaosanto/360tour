@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 
-$storageDir = 'C:/Recadastramento/fotos/app360/storage';
-$staticUrl = 'https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/static';
+$storageDir = getenv('STORAGE_DIR') ?: __DIR__ . '/app/temp';
+$staticUrl = rtrim(getenv('STATIC_URL') ?: '/app/static', '/');
 
 function fail_response(int $status, string $message): void
 {

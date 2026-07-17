@@ -87,6 +87,7 @@
       sceneList: settings.sceneList !== false,
       mouseViewMode: settings.mouseViewMode === "qtvr" ? "qtvr" : "drag",
       showPhotoNames: !!settings.showPhotoNames,
+      showMapViewCone: settings.showMapViewCone !== false,
       saveOriginalPhotos: settings.saveOriginalPhotos !== false
     };
   }
@@ -411,6 +412,7 @@
     document.getElementById("settingFullscreen").checked = project.settings.fullscreen !== false;
     document.getElementById("settingSceneList").checked = project.settings.sceneList !== false;
     document.getElementById("settingShowPhotoNames").checked = !!project.settings.showPhotoNames;
+    document.getElementById("settingShowMapViewCone").checked = project.settings.showMapViewCone !== false;
     document.getElementById("settingSaveOriginalPhotos").checked = project.settings.saveOriginalPhotos !== false;
     document.getElementById("settingMouseMode").value = project.settings.mouseViewMode || "drag";
     document.getElementById("controls").hidden = project.settings.controls === false;
@@ -583,7 +585,7 @@
     renderHotspots();
   });
 
-  ["settingAutorotate", "settingControls", "settingFullscreen", "settingSceneList", "settingShowPhotoNames", "settingSaveOriginalPhotos"].forEach(function (id) {
+  ["settingAutorotate", "settingControls", "settingFullscreen", "settingSceneList", "settingShowPhotoNames", "settingShowMapViewCone", "settingSaveOriginalPhotos"].forEach(function (id) {
     document.getElementById(id).addEventListener("change", function (event) {
       var key = id.replace("setting", "");
       key = key.charAt(0).toLowerCase() + key.slice(1);

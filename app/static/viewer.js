@@ -53,6 +53,8 @@
   var printViewer = null;
   var printScene = null;
   var printSceneId = null;
+  var printInProgress = false;
+  var printButtonLabel = printGeoButton ? printGeoButton.textContent : "Print";
   var sketchDrawing = false;
   var sketchMode = "draw";
   var sketchAnnotations = {};
@@ -93,6 +95,10 @@
 
   function imagePath(path) {
     return projectFileUrl(path);
+  }
+
+  function isMapViewConeEnabled() {
+    return !(project && project.settings && project.settings.showMapViewCone === false);
   }
 
   function setupProjectChrome() {
@@ -1048,7 +1054,7 @@
       container.innerHTML = "";
       printViewer = new Marzipano.Viewer(container, {
         controls: { mouseViewMode: project.settings.mouseViewMode || "drag" },
-        stage: { progressive: true }
+        stage: { progressive: true, preserveDrawingBuffer: true }
       });
       var source = Marzipano.ImageUrlSource.fromString(projectFileUrl(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg"));
       var geometry = new Marzipano.CubeGeometry(sceneData.levels);
@@ -1091,6 +1097,8 @@
     var printMapCone = document.getElementById("printMapCone");
     if (!printMap || !printMapTiles || !printMapView || !printMapCone) return;
 
+    var showCone = isMapViewConeEnabled();
+    printMapView.hidden = !showCone;
     printMapTiles.innerHTML = "";
     var metadata = sceneData.metadata || {};
     var coordinates = readCoordinates(metadata.coordinates);
@@ -1119,6 +1127,7 @@
       }
     }
 
+    if (!showCone) return;
     var bearing = cameraHeadingOffset(sceneData) + (params.yaw * 180 / Math.PI);
     bearing = ((bearing % 360) + 360) % 360;
     var length = 62;
@@ -1180,17 +1189,31 @@
     function done() {
       if (finished) return;
       finished = true;
-      window.setTimeout(callback, 900);
+      window.setTimeout(callback, 250);
     }
     function tick() {
       remaining -= 1;
       if (remaining <= 0) done();
     }
-    window.setTimeout(done, 1400);
+    window.setTimeout(done, 10000);
     images.forEach(function (image) {
       image.addEventListener("load", tick, { once: true });
       image.addEventListener("error", tick, { once: true });
     });
+  }
+
+  function setPrintBusy(isBusy) {
+    printInProgress = !!isBusy;
+    if (!printGeoButton) return;
+    printGeoButton.disabled = !!isBusy;
+    printGeoButton.classList.toggle("is-loading", !!isBusy);
+    printGeoButton.setAttribute("aria-busy", isBusy ? "true" : "false");
+    printGeoButton.textContent = isBusy ? "Preparando" : printButtonLabel;
+  }
+
+  function clearPrintPreparation() {
+    body.classList.remove("print-preparing");
+    setPrintBusy(false);
   }
 
   function viewerStylesheetHref() {
@@ -1228,28 +1251,130 @@
     return popup;
   }
 
-  function movePrintLayoutToPopup(popup) {
-    if (!popup || popup.closed || !printLayout || !printLayout.parentNode) return null;
-    var placeholder = document.createComment("print-layout-return");
-    var originalParent = printLayout.parentNode;
-    originalParent.insertBefore(placeholder, printLayout);
-    popup.document.body.innerHTML = "";
-    popup.document.body.appendChild(printLayout);
-    printLayout.removeAttribute("aria-hidden");
+  function currentPrintLayer() {
+    if (!printScene || !printScene.scene || !printScene.scene.layer) return null;
+    return printScene.scene.layer();
+  }
 
-    var restored = false;
-    return function restorePrintLayout() {
-      if (restored) return;
-      restored = true;
-      if (placeholder.parentNode) {
-        placeholder.parentNode.insertBefore(printLayout, placeholder);
-        placeholder.parentNode.removeChild(placeholder);
-      } else if (originalParent) {
-        originalParent.appendChild(printLayout);
+  function waitForPrintPanoStable(callback, timeoutMs) {
+    var layer = currentPrintLayer();
+    var stage = printViewer && printViewer.stage ? printViewer.stage() : null;
+    if (!layer || !stage) {
+      callback(false);
+      return;
+    }
+
+    var finished = false;
+    var timeout = window.setTimeout(function () {
+      finish(false);
+    }, timeoutMs || 10000);
+
+    function finish(isStable) {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timeout);
+      layer.removeEventListener("renderComplete", onRenderComplete);
+      callback(!!isStable);
+    }
+
+    function onRenderComplete(isStable) {
+      if (!isStable) return;
+      window.setTimeout(function () {
+        finish(true);
+      }, 180);
+    }
+
+    layer.addEventListener("renderComplete", onRenderComplete);
+    try {
+      stage.render();
+    } catch (error) {}
+  }
+
+  function waitForPrintAssets(callback) {
+    var panoDone = false;
+    var panoStable = false;
+    var imagesDone = false;
+
+    function maybeDone() {
+      if (panoDone && imagesDone) {
+        callback(panoStable);
       }
-      printLayout.setAttribute("aria-hidden", "true");
-      body.classList.remove("print-preparing");
-    };
+    }
+
+    waitForPrintPanoStable(function (isStable) {
+      panoDone = true;
+      panoStable = isStable;
+      maybeDone();
+    }, 10000);
+
+    waitForPrintImages(function () {
+      imagesDone = true;
+      maybeDone();
+    });
+  }
+
+  function capturePrintPanoSnapshot() {
+    try {
+      if (printViewer && printViewer.stage && printViewer.stage().takeSnapshot) {
+        var stageSnapshot = printViewer.stage().takeSnapshot({ quality: 92 });
+        if (stageSnapshot && stageSnapshot.length > 1000) return stageSnapshot;
+      }
+    } catch (error) {}
+    var container = document.getElementById("printPanoLive");
+    var canvas = container ? container.querySelector("canvas") : null;
+    if (!canvas || !canvas.width || !canvas.height) return "";
+    try {
+      var directSnapshot = canvas.toDataURL("image/png");
+      if (directSnapshot && directSnapshot.length > 1000) return directSnapshot;
+    } catch (error) {}
+    try {
+      var buffer = document.createElement("canvas");
+      buffer.width = canvas.width;
+      buffer.height = canvas.height;
+      var context = buffer.getContext("2d");
+      if (!context) return "";
+      context.drawImage(canvas, 0, 0);
+      var copiedSnapshot = buffer.toDataURL("image/png");
+      return copiedSnapshot && copiedSnapshot.length > 1000 ? copiedSnapshot : "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function waitForPrintPanoSnapshot(callback, attempts) {
+    var snapshot = capturePrintPanoSnapshot();
+    if (snapshot || attempts <= 0) {
+      callback(snapshot);
+      return;
+    }
+    window.setTimeout(function () {
+      waitForPrintPanoSnapshot(callback, attempts - 1);
+    }, 250);
+  }
+
+  function clonePrintLayoutForPopup(snapshotUrl) {
+    if (!printLayout) return null;
+    var clone = printLayout.cloneNode(true);
+    clone.removeAttribute("aria-hidden");
+    var livePano = clone.querySelector("#printPanoLive");
+    if (livePano && snapshotUrl) {
+      livePano.innerHTML = "";
+      var image = document.createElement("img");
+      image.className = "print-pano-snapshot";
+      image.alt = "Vista atual do panorama";
+      image.src = snapshotUrl;
+      livePano.appendChild(image);
+    }
+    return clone;
+  }
+
+  function writePrintPopupLayout(popup, snapshotUrl) {
+    if (!popup || popup.closed) return false;
+    var clone = clonePrintLayoutForPopup(snapshotUrl);
+    if (!clone) return false;
+    popup.document.body.innerHTML = "";
+    popup.document.body.appendChild(popup.document.importNode(clone, true));
+    return true;
   }
 
   function waitForPopupImages(popup, callback) {
@@ -1282,12 +1407,12 @@
     });
   }
 
-  function printPopupLayout(popup, restore) {
+  function printPopupLayout(popup) {
     var cleaned = false;
     function cleanup() {
       if (cleaned) return;
       cleaned = true;
-      restore();
+      clearPrintPreparation();
       try {
         if (popup && !popup.closed) popup.close();
       } catch (error) {}
@@ -1303,25 +1428,39 @@
   }
 
   function printGeoreferencedLayout() {
-    if (!currentScene) return;
-    var popup = openPrintPopup();
-    if (!popup) {
-      window.alert("Permita pop-ups para imprimir sem exibir a URL do projeto.");
-      return;
-    }
+    if (!currentScene || printInProgress) return;
+    setPrintBusy(true);
     updatePrintLayout();
-    waitForPrintImages(function () {
-      var restore = movePrintLayoutToPopup(popup);
-      if (!restore) {
-        body.classList.remove("print-preparing");
-        try {
-          popup.close();
-        } catch (error) {}
+    waitForPrintAssets(function (panoStable) {
+      if (!panoStable) {
+        clearPrintPreparation();
+        window.alert("A vista 360 ainda esta carregando. Tente imprimir novamente em alguns segundos.");
         return;
       }
-      waitForPopupImages(popup, function () {
-        printPopupLayout(popup, restore);
-      });
+      waitForPrintPanoSnapshot(function (snapshotUrl) {
+        if (!snapshotUrl) {
+          clearPrintPreparation();
+          window.alert("Vista 360 nao ficou pronta para impressao. Tente imprimir novamente.");
+          return;
+        }
+        var popup = openPrintPopup();
+        if (!popup) {
+          clearPrintPreparation();
+          window.alert("Permita pop-ups para imprimir sem exibir a URL do projeto.");
+          return;
+        }
+        if (!writePrintPopupLayout(popup, snapshotUrl)) {
+          clearPrintPreparation();
+          window.alert("Vista 360 nao ficou pronta para impressao. Tente imprimir novamente.");
+          try {
+            popup.close();
+          } catch (error) {}
+          return;
+        }
+        waitForPopupImages(popup, function () {
+          printPopupLayout(popup);
+        });
+      }, 10);
     });
   }
 
@@ -1402,7 +1541,7 @@
       marker.style.left = Math.round(lonToWorldX(point.lon, zoom) - left) + "px";
       marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
       marker.title = details.length ? details.join(" | ") : "Abrir foto";
-      if (currentScene && point.scene.data.id === currentScene.data.id) {
+      if (currentScene && point.scene.data.id === currentScene.data.id && isMapViewConeEnabled()) {
         marker.appendChild(createViewDirectionElement());
       }
       marker.addEventListener("click", function () { switchScene(point.scene); });
@@ -1412,6 +1551,7 @@
   }
 
   function updateCameraDirectionIndicator() {
+    if (!isMapViewConeEnabled()) return;
     if (!currentScene || !mapMarkers) return;
     var indicator = mapMarkers.querySelector(".map-view-direction");
     if (!indicator) return;
@@ -1697,6 +1837,7 @@
     body.classList.toggle("hide-controls", project.settings.controls === false);
     body.classList.toggle("hide-fullscreen", project.settings.fullscreen === false);
     body.classList.toggle("hide-scenes", project.settings.sceneList === false || !showBtnList);
+    body.classList.toggle("hide-map-view-cone", !isMapViewConeEnabled());
     buildScenes();
     renderSceneList();
     setupControls();
@@ -1733,6 +1874,7 @@
   function applyProject(payload) {
     project = payload;
     project.settings = project.settings || {};
+    project.settings.showMapViewCone = project.settings.showMapViewCone !== false;
     project.scenes = project.scenes || [];
     setupProjectChrome();
     if (!project.scenes.length) {
