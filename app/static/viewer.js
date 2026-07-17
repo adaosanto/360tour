@@ -33,6 +33,12 @@
   var mapRecenter = document.getElementById("mapRecenter");
   var printGeoButton = document.getElementById("printGeoButton");
   var printLayout = document.getElementById("printLayout");
+  var sketchToggle = document.getElementById("sketchToggle");
+  var sketchClear = document.getElementById("sketchClear");
+  var sketchUndo = document.getElementById("sketchUndo");
+  var sketchFinishPolygon = document.getElementById("sketchFinishPolygon");
+  var annotationOverlay = document.getElementById("annotationOverlay");
+  var printAnnotationOverlay = document.getElementById("printAnnotationOverlay");
   var autorotateToggle = document.getElementById("autorotateToggle");
   var fullscreenToggle = document.getElementById("fullscreenToggle");
   var viewer = null;
@@ -47,6 +53,14 @@
   var printViewer = null;
   var printScene = null;
   var printSceneId = null;
+  var sketchDrawing = false;
+  var sketchMode = "draw";
+  var sketchAnnotations = {};
+  var activeStroke = null;
+  var pendingPolygon = null;
+  var selectedAnnotationId = null;
+  var selectedVertexIndex = null;
+  var editDrag = null;
   var baseTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
   var overlayTileUrlTemplate = "https://tiles.arcgis.com/tiles/MRbkurfLm8nmQrDq/arcgis/rest/services/RasterLrv2026_1/MapServer/tile/{level}/{row}/{col}";
   var initialized = false;
@@ -226,6 +240,11 @@
   function switchScene(scene) {
     ensureSceneLoaded(scene);
     currentScene = scene;
+    activeStroke = null;
+    pendingPolygon = null;
+    selectedAnnotationId = null;
+    selectedVertexIndex = null;
+    editDrag = null;
     viewer.stopMovement();
     viewer.setIdleMovement(null);
     scene.view.setParameters(scene.data.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 });
@@ -236,6 +255,8 @@
     });
     updateMetadata(scene.data);
     updateMapMarkers();
+    updateSketchState();
+    renderAnnotations();
     applyAutorotate(true);
   }
 
@@ -330,11 +351,27 @@
     ]);
   }
 
-  function horizontalFovDegrees(params) {
+  function horizontalFovRadians(params, width, height) {
     var verticalFov = Number(params.fov) || Math.PI / 2;
-    var width = Math.max(1, panoElement.clientWidth || window.innerWidth || 1);
-    var height = Math.max(1, panoElement.clientHeight || window.innerHeight || 1);
-    return 2 * Math.atan(Math.tan(verticalFov / 2) * (width / height)) * 180 / Math.PI;
+    width = Math.max(1, width || 1);
+    height = Math.max(1, height || 1);
+    return 2 * Math.atan(Math.tan(verticalFov / 2) * (width / height));
+  }
+
+  function horizontalFovDegrees(params) {
+    var width = panoElement.clientWidth || window.innerWidth || 1;
+    var height = panoElement.clientHeight || window.innerHeight || 1;
+    return horizontalFovRadians(params, width, height) * 180 / Math.PI;
+  }
+
+  function printVerticalFov(params, container) {
+    var sourceWidth = panoElement.clientWidth || window.innerWidth || 1;
+    var sourceHeight = panoElement.clientHeight || window.innerHeight || 1;
+    var targetWidth = container.clientWidth || sourceWidth;
+    var targetHeight = container.clientHeight || sourceHeight;
+    var horizontalFov = horizontalFovRadians(params, sourceWidth, sourceHeight);
+    var targetAspect = Math.max(0.01, targetWidth / Math.max(1, targetHeight));
+    return Math.max(0.001, Math.min(Math.PI - 0.001, 2 * Math.atan(Math.tan(horizontalFov / 2) / targetAspect)));
   }
 
   function createViewDirectionElement() {
@@ -420,6 +457,590 @@
     if (element) element.textContent = value == null || value === "" ? "-" : String(value);
   }
 
+  function sketchStorageKey() {
+    return "marzipano-sketch-" + projectId;
+  }
+
+  function loadSketchAnnotations() {
+    try {
+      var stored = localStorage.getItem(sketchStorageKey());
+      sketchAnnotations = stored ? JSON.parse(stored) || {} : {};
+    } catch (error) {
+      sketchAnnotations = {};
+    }
+    normalizeSketchAnnotations();
+    updateSketchState();
+  }
+
+  function saveSketchAnnotations() {
+    try {
+      localStorage.setItem(sketchStorageKey(), JSON.stringify(sketchAnnotations));
+    } catch (error) {}
+    updateSketchState();
+  }
+
+  function normalizeSketchAnnotations() {
+    var changed = false;
+    Object.keys(sketchAnnotations).forEach(function (sceneId) {
+      if (!Array.isArray(sketchAnnotations[sceneId])) {
+        sketchAnnotations[sceneId] = [];
+        changed = true;
+        return;
+      }
+      var filtered = sketchAnnotations[sceneId].filter(function (annotation) {
+        return annotation && annotation.type !== "measure";
+      });
+      if (filtered.length !== sketchAnnotations[sceneId].length) {
+        sketchAnnotations[sceneId] = filtered;
+        changed = true;
+      }
+      sketchAnnotations[sceneId].forEach(function (annotation) {
+        if (!annotation.id) {
+          annotation.id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+          changed = true;
+        }
+      });
+    });
+    if (changed) {
+      try {
+        localStorage.setItem(sketchStorageKey(), JSON.stringify(sketchAnnotations));
+      } catch (error) {}
+    }
+  }
+
+  function activeSceneId() {
+    return currentScene && currentScene.data ? currentScene.data.id : "";
+  }
+
+  function sceneSketches(sceneId) {
+    sceneId = sceneId || activeSceneId();
+    if (!sceneId) return [];
+    if (!Array.isArray(sketchAnnotations[sceneId])) {
+      sketchAnnotations[sceneId] = [];
+    }
+    return sketchAnnotations[sceneId];
+  }
+
+  function hasAnySketch() {
+    return Object.keys(sketchAnnotations).some(function (sceneId) {
+      return Array.isArray(sketchAnnotations[sceneId]) && sketchAnnotations[sceneId].length > 0;
+    });
+  }
+
+  function updateSketchState() {
+    body.classList.toggle("sketch-has-drawing", hasAnySketch() || !!pendingPolygon || !!activeStroke);
+    if (sketchFinishPolygon) {
+      sketchFinishPolygon.disabled = !(pendingPolygon && pendingPolygon.points.length >= 3);
+    }
+  }
+
+  function setSketchMode(mode) {
+    sketchMode = mode || "draw";
+    if (pendingPolygon && sketchMode !== "polygon") {
+      pendingPolygon = null;
+    }
+    if (sketchMode !== "edit") {
+      selectedAnnotationId = null;
+      selectedVertexIndex = null;
+      editDrag = null;
+    }
+    ["draw", "text", "polygon", "edit"].forEach(function (item) {
+      body.classList.toggle("sketch-mode-" + item, sketchMode === item);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-sketch-mode]"), function (button) {
+      button.classList.toggle("enabled", button.dataset.sketchMode === sketchMode);
+    });
+    updateSketchState();
+    renderAnnotations();
+  }
+
+  function createSvgElement(name) {
+    return document.createElementNS("http://www.w3.org/2000/svg", name);
+  }
+
+  function resizeAnnotationOverlay() {
+    if (!annotationOverlay) return;
+    var rect = panoElement.getBoundingClientRect();
+    annotationOverlay.setAttribute("viewBox", "0 0 " + Math.max(1, Math.round(rect.width)) + " " + Math.max(1, Math.round(rect.height)));
+  }
+
+  function screenPointToView(event) {
+    if (!currentScene || !currentScene.view || !annotationOverlay) return null;
+    var rect = annotationOverlay.getBoundingClientRect();
+    return currentScene.view.screenToCoordinates({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    });
+  }
+
+  function projectPoint(view, point) {
+    var projected = view.coordinatesToScreen({ yaw: point.yaw, pitch: point.pitch });
+    if (!projected || projected.x == null || projected.y == null) return null;
+    return projected;
+  }
+
+  function screenPointFromEvent(event) {
+    if (!annotationOverlay) return null;
+    var rect = annotationOverlay.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    };
+  }
+
+  function distanceBetweenScreenPoints(a, b) {
+    var dx = a.x - b.x;
+    var dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function distanceToSegment(point, a, b) {
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var lengthSquared = dx * dx + dy * dy;
+    if (!lengthSquared) return distanceBetweenScreenPoints(point, a);
+    var t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared;
+    t = Math.max(0, Math.min(1, t));
+    return distanceBetweenScreenPoints(point, {
+      x: a.x + t * dx,
+      y: a.y + t * dy
+    });
+  }
+
+  function annotationPoints(annotation) {
+    if (!annotation) return [];
+    if (annotation.type === "text") return [annotation];
+    return Array.isArray(annotation.points) ? annotation.points : [];
+  }
+
+  function findAnnotationById(id) {
+    if (!id) return null;
+    return sceneSketches().find(function (annotation) {
+      return annotation.id === id;
+    }) || null;
+  }
+
+  function findPolygonVertexAt(screenPoint) {
+    var annotations = sceneSketches();
+    var best = null;
+    for (var index = annotations.length - 1; index >= 0; index--) {
+      var annotation = annotations[index];
+      if (!annotation || annotation.type !== "polygon" || !Array.isArray(annotation.points)) continue;
+      annotation.points.forEach(function (point, vertexIndex) {
+        var projected = projectPoint(currentScene.view, point);
+        if (!projected) return;
+        var distance = distanceBetweenScreenPoints(screenPoint, projected);
+        if (distance <= 16 && (!best || distance < best.distance)) {
+          best = {
+            annotation: annotation,
+            vertexIndex: vertexIndex,
+            distance: distance
+          };
+        }
+      });
+      if (best && best.distance <= 8) break;
+    }
+    return best;
+  }
+
+  function annotationHitDistance(annotation, screenPoint) {
+    var points = annotationPoints(annotation).map(function (point) {
+      return projectPoint(currentScene.view, point);
+    }).filter(Boolean);
+    if (!points.length) return Infinity;
+    if (annotation.type === "text") return distanceBetweenScreenPoints(screenPoint, points[0]);
+    if (points.length === 1) return distanceBetweenScreenPoints(screenPoint, points[0]);
+    var best = Infinity;
+    points.forEach(function (point, index) {
+      best = Math.min(best, distanceBetweenScreenPoints(screenPoint, point));
+      if (index > 0) {
+        best = Math.min(best, distanceToSegment(screenPoint, points[index - 1], point));
+      }
+    });
+    if (annotation.type === "polygon" && points.length > 2) {
+      best = Math.min(best, distanceToSegment(screenPoint, points[points.length - 1], points[0]));
+    }
+    return best;
+  }
+
+  function findAnnotationAt(screenPoint) {
+    var annotations = sceneSketches();
+    for (var index = annotations.length - 1; index >= 0; index--) {
+      var annotation = annotations[index];
+      var distance = annotationHitDistance(annotation, screenPoint);
+      var threshold = annotation.type === "text" ? 32 : 16;
+      if (distance <= threshold) return annotation;
+    }
+    return null;
+  }
+
+  function cloneAnnotation(annotation) {
+    return JSON.parse(JSON.stringify(annotation));
+  }
+
+  function clampPitch(value) {
+    var limit = Math.PI / 2 - 0.001;
+    return Math.max(-limit, Math.min(limit, value));
+  }
+
+  function yawDelta(current, start) {
+    var delta = current - start;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    return delta;
+  }
+
+  function applyMovedPoint(target, source, deltaYaw, deltaPitch) {
+    target.yaw = source.yaw + deltaYaw;
+    target.pitch = clampPitch(source.pitch + deltaPitch);
+  }
+
+  function moveAnnotation(annotation, original, startPoint, currentPoint) {
+    var deltaYaw = yawDelta(currentPoint.yaw, startPoint.yaw);
+    var deltaPitch = currentPoint.pitch - startPoint.pitch;
+    if (annotation.type === "text") {
+      applyMovedPoint(annotation, original, deltaYaw, deltaPitch);
+      return;
+    }
+    var targetPoints = annotationPoints(annotation);
+    var sourcePoints = annotationPoints(original);
+    targetPoints.forEach(function (point, index) {
+      if (sourcePoints[index]) applyMovedPoint(point, sourcePoints[index], deltaYaw, deltaPitch);
+    });
+  }
+
+  function moveAnnotationVertex(annotation, vertexIndex, point) {
+    if (!annotation || !Array.isArray(annotation.points) || !annotation.points[vertexIndex]) return;
+    annotation.points[vertexIndex].yaw = point.yaw;
+    annotation.points[vertexIndex].pitch = clampPitch(point.pitch);
+  }
+
+  function beginEditAnnotation(event, point) {
+    var screenPoint = screenPointFromEvent(event);
+    var vertexHit = screenPoint ? findPolygonVertexAt(screenPoint) : null;
+    if (vertexHit) {
+      selectedAnnotationId = vertexHit.annotation.id;
+      selectedVertexIndex = vertexHit.vertexIndex;
+      event.preventDefault();
+      editDrag = {
+        id: vertexHit.annotation.id,
+        mode: "vertex",
+        vertexIndex: vertexHit.vertexIndex,
+        moved: false
+      };
+      if (annotationOverlay && annotationOverlay.setPointerCapture) {
+        annotationOverlay.setPointerCapture(event.pointerId);
+      }
+      renderAnnotations();
+      return;
+    }
+    var annotation = screenPoint ? findAnnotationAt(screenPoint) : null;
+    selectedAnnotationId = annotation ? annotation.id : null;
+    selectedVertexIndex = null;
+    if (!annotation) {
+      editDrag = null;
+      renderAnnotations();
+      return;
+    }
+    event.preventDefault();
+    editDrag = {
+      id: annotation.id,
+      mode: "annotation",
+      startPoint: point,
+      original: cloneAnnotation(annotation),
+      moved: false
+    };
+    if (annotationOverlay && annotationOverlay.setPointerCapture) {
+      annotationOverlay.setPointerCapture(event.pointerId);
+    }
+    renderAnnotations();
+  }
+
+  function drawEditAnnotation(event) {
+    if (!editDrag) return false;
+    var point = screenPointToView(event);
+    if (!point) return true;
+    var annotation = findAnnotationById(editDrag.id);
+    if (!annotation) return true;
+    event.preventDefault();
+    if (editDrag.mode === "vertex") {
+      moveAnnotationVertex(annotation, editDrag.vertexIndex, point);
+      selectedVertexIndex = editDrag.vertexIndex;
+    } else {
+      moveAnnotation(annotation, editDrag.original, editDrag.startPoint, point);
+    }
+    editDrag.moved = true;
+    renderAnnotations();
+    return true;
+  }
+
+  function endEditAnnotation(event) {
+    if (!editDrag) return false;
+    if (annotationOverlay && annotationOverlay.hasPointerCapture && annotationOverlay.hasPointerCapture(event.pointerId)) {
+      annotationOverlay.releasePointerCapture(event.pointerId);
+    }
+    if (editDrag.moved) {
+      saveSketchAnnotations();
+    }
+    editDrag = null;
+    renderAnnotations();
+    return true;
+  }
+
+  function editTextAnnotation(annotation) {
+    if (!annotation || annotation.type !== "text") return;
+    var nextText = window.prompt("Texto da anotação:", annotation.text || "");
+    if (nextText == null) return;
+    nextText = nextText.trim();
+    if (!nextText) return;
+    annotation.text = nextText;
+    selectedAnnotationId = annotation.id;
+    saveSketchAnnotations();
+    renderAnnotations();
+  }
+
+  function deleteSelectedAnnotation() {
+    if (!selectedAnnotationId) return;
+    var annotations = sceneSketches();
+    var index = annotations.findIndex(function (annotation) {
+      return annotation.id === selectedAnnotationId;
+    });
+    if (index === -1) return;
+    var annotation = annotations[index];
+    if (annotation.type === "polygon" && selectedVertexIndex != null && Array.isArray(annotation.points) && annotation.points.length > 3) {
+      annotation.points.splice(selectedVertexIndex, 1);
+      selectedVertexIndex = null;
+      saveSketchAnnotations();
+      renderAnnotations();
+      return;
+    }
+    annotations.splice(index, 1);
+    selectedAnnotationId = null;
+    selectedVertexIndex = null;
+    saveSketchAnnotations();
+    renderAnnotations();
+  }
+
+  function appendPolyline(svg, view, points, className) {
+    var current = [];
+    points.forEach(function (point) {
+      var projected = projectPoint(view, point);
+      if (!projected) {
+        if (current.length > 1) appendPolylineElement(svg, current, className);
+        current = [];
+        return;
+      }
+      current.push(projected);
+    });
+    if (current.length > 1) appendPolylineElement(svg, current, className);
+  }
+
+  function appendPolylineElement(svg, points, className) {
+    var polyline = createSvgElement("polyline");
+    polyline.setAttribute("class", className);
+    polyline.setAttribute("points", points.map(function (point) {
+      return point.x.toFixed(1) + "," + point.y.toFixed(1);
+    }).join(" "));
+    svg.appendChild(polyline);
+  }
+
+  function appendPolygon(svg, view, points, className) {
+    var projected = points.map(function (point) { return projectPoint(view, point); }).filter(Boolean);
+    if (projected.length < 2) return;
+    var element = createSvgElement(projected.length >= 3 && className.indexOf("annotation-polygon") !== -1 ? "polygon" : "polyline");
+    element.setAttribute("class", className);
+    element.setAttribute("points", projected.map(function (point) {
+      return point.x.toFixed(1) + "," + point.y.toFixed(1);
+    }).join(" "));
+    svg.appendChild(element);
+    projected.forEach(function (point) {
+      var vertex = createSvgElement("circle");
+      vertex.setAttribute("class", "annotation-vertex");
+      vertex.setAttribute("cx", point.x.toFixed(1));
+      vertex.setAttribute("cy", point.y.toFixed(1));
+      vertex.setAttribute("r", "4");
+      svg.appendChild(vertex);
+    });
+  }
+
+  function appendPointHandle(svg, view, point, className, radius) {
+    var projected = projectPoint(view, point);
+    if (!projected) return;
+    var handle = createSvgElement("circle");
+    handle.setAttribute("class", className);
+    handle.setAttribute("cx", projected.x.toFixed(1));
+    handle.setAttribute("cy", projected.y.toFixed(1));
+    handle.setAttribute("r", String(radius || 5));
+    svg.appendChild(handle);
+  }
+
+  function appendTextAnnotation(svg, view, annotation, selected) {
+    var projected = projectPoint(view, annotation);
+    if (!projected) return;
+    ["annotation-text-shadow", "annotation-text"].forEach(function (className) {
+      var text = createSvgElement("text");
+      text.setAttribute("class", className + (selected ? " annotation-selected" : ""));
+      text.setAttribute("x", projected.x.toFixed(1));
+      text.setAttribute("y", projected.y.toFixed(1));
+      text.textContent = annotation.text || "";
+      svg.appendChild(text);
+    });
+  }
+
+  function appendSelectionHandles(svg, view, annotation) {
+    annotationPoints(annotation).forEach(function (point, index) {
+      var className = "annotation-selection-handle";
+      if (annotation.id === selectedAnnotationId && index === selectedVertexIndex) {
+        className += " annotation-handle-active";
+      }
+      appendPointHandle(svg, view, point, className, annotation.type === "text" ? 6 : 5);
+    });
+  }
+
+  function renderAnnotationLayer(svg, view, annotations, options) {
+    if (!svg || !view) return;
+    var width = svg.clientWidth || panoElement.clientWidth || 1;
+    var height = svg.clientHeight || panoElement.clientHeight || 1;
+    svg.setAttribute("viewBox", "0 0 " + Math.max(1, Math.round(width)) + " " + Math.max(1, Math.round(height)));
+    svg.innerHTML = "";
+    annotations.forEach(function (annotation) {
+      var selected = options && options.selectedId === annotation.id;
+      var selectedClass = selected ? " annotation-selected" : "";
+      if (annotation.type === "stroke") appendPolyline(svg, view, annotation.points || [], "annotation-stroke" + selectedClass);
+      if (annotation.type === "polygon") appendPolygon(svg, view, annotation.points || [], "annotation-polygon" + selectedClass);
+      if (annotation.type === "text") appendTextAnnotation(svg, view, annotation, selected);
+      if (selected && options && options.showSelection) appendSelectionHandles(svg, view, annotation);
+    });
+    if (options && options.pendingPolygon && options.pendingPolygon.points.length) {
+      appendPolygon(svg, view, options.pendingPolygon.points, "annotation-pending");
+    }
+    if (options && options.activeStroke && options.activeStroke.points.length > 1) {
+      appendPolyline(svg, view, options.activeStroke.points, "annotation-stroke annotation-pending");
+    }
+  }
+
+  function renderAnnotations() {
+    if (!currentScene || !currentScene.view) return;
+    resizeAnnotationOverlay();
+    renderAnnotationLayer(annotationOverlay, currentScene.view, sceneSketches(), {
+      pendingPolygon: pendingPolygon,
+      activeStroke: activeStroke,
+      selectedId: selectedAnnotationId,
+      showSelection: sketchMode === "edit",
+      sceneData: currentScene.data
+    });
+  }
+
+  function renderPrintAnnotations(sceneData) {
+    if (!printAnnotationOverlay || !printScene || !printScene.view) return;
+    renderAnnotationLayer(printAnnotationOverlay, printScene.view, sceneSketches(sceneData.id), {
+      sceneData: sceneData
+    });
+  }
+
+  function addSketchAnnotation(annotation) {
+    annotation.id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    sceneSketches().push(annotation);
+    saveSketchAnnotations();
+    renderAnnotations();
+  }
+
+  function clearSketch() {
+    var sceneId = activeSceneId();
+    if (!sceneId) return;
+    sketchAnnotations[sceneId] = [];
+    activeStroke = null;
+    pendingPolygon = null;
+    selectedAnnotationId = null;
+    selectedVertexIndex = null;
+    editDrag = null;
+    saveSketchAnnotations();
+    renderAnnotations();
+  }
+
+  function undoSketch() {
+    var annotations = sceneSketches();
+    if (pendingPolygon && pendingPolygon.points.length) {
+      pendingPolygon.points.pop();
+      if (!pendingPolygon.points.length) pendingPolygon = null;
+    } else {
+      var removed = annotations.pop();
+      if (removed && removed.id === selectedAnnotationId) selectedAnnotationId = null;
+      selectedVertexIndex = null;
+      saveSketchAnnotations();
+    }
+    updateSketchState();
+    renderAnnotations();
+  }
+
+  function finishPolygon() {
+    if (!pendingPolygon || pendingPolygon.points.length < 3) return;
+    addSketchAnnotation({ type: "polygon", points: pendingPolygon.points.slice() });
+    pendingPolygon = null;
+    updateSketchState();
+    renderAnnotations();
+  }
+
+  function beginSketch(event) {
+    if (!body.classList.contains("sketch-active")) return;
+    if (event.button != null && event.button !== 0) return;
+    var point = screenPointToView(event);
+    if (!point) return;
+    event.preventDefault();
+    if (sketchMode === "edit") {
+      beginEditAnnotation(event, point);
+      return;
+    }
+    if (sketchMode === "text") {
+      var text = window.prompt("Texto da anotação:");
+      if (text && text.trim()) {
+        addSketchAnnotation({ type: "text", yaw: point.yaw, pitch: point.pitch, text: text.trim() });
+      }
+      return;
+    }
+    if (sketchMode === "polygon") {
+      if (!pendingPolygon) pendingPolygon = { type: "polygon", points: [] };
+      pendingPolygon.points.push({ yaw: point.yaw, pitch: point.pitch });
+      updateSketchState();
+      renderAnnotations();
+      return;
+    }
+    sketchDrawing = true;
+    activeStroke = { type: "stroke", points: [{ yaw: point.yaw, pitch: point.pitch }] };
+    if (annotationOverlay && annotationOverlay.setPointerCapture) {
+      annotationOverlay.setPointerCapture(event.pointerId);
+    }
+  }
+
+  function drawSketch(event) {
+    if (drawEditAnnotation(event)) return;
+    if (!sketchDrawing || !activeStroke) return;
+    var point = screenPointToView(event);
+    if (!point) return;
+    event.preventDefault();
+    var points = activeStroke.points;
+    var last = points[points.length - 1];
+    if (Math.abs(point.yaw - last.yaw) + Math.abs(point.pitch - last.pitch) < 0.002) return;
+    points.push({ yaw: point.yaw, pitch: point.pitch });
+    updateSketchState();
+    renderAnnotations();
+  }
+
+  function endSketch(event) {
+    if (endEditAnnotation(event)) return;
+    if (!sketchDrawing) return;
+    sketchDrawing = false;
+    if (annotationOverlay && annotationOverlay.hasPointerCapture && annotationOverlay.hasPointerCapture(event.pointerId)) {
+      annotationOverlay.releasePointerCapture(event.pointerId);
+    }
+    if (activeStroke && activeStroke.points.length > 1) {
+      addSketchAnnotation({ type: "stroke", points: activeStroke.points.slice() });
+    }
+    activeStroke = null;
+    updateSketchState();
+    renderAnnotations();
+  }
+
   function renderPrintPano(sceneData, params) {
     var container = document.getElementById("printPanoLive");
     if (!container) return;
@@ -440,15 +1061,17 @@
       };
       printSceneId = sceneData.id;
     }
+    var fov = printVerticalFov(params, container);
     printScene.view.setParameters({
       yaw: params.yaw,
       pitch: params.pitch,
-      fov: params.fov
+      fov: fov
     });
     if (printViewer && typeof printViewer.updateSize === "function") {
       printViewer.updateSize();
     }
     printScene.scene.switchTo();
+    renderPrintAnnotations(sceneData);
   }
 
   function addPrintMapTile(container, url, col, row, left, top, className) {
@@ -509,6 +1132,8 @@
   function updatePrintLayout() {
     if (!printLayout || !currentScene || !currentScene.view) return;
     body.classList.add("print-preparing");
+    resizeAnnotationOverlay();
+    renderAnnotations();
 
     var sceneData = currentScene.data;
     var metadata = sceneData.metadata || {};
@@ -532,7 +1157,7 @@
     setPrintText("printCameraYaw", formatDegrees(cameraYaw));
     setPrintText("printViewYaw", formatDegrees(viewYaw));
     setPrintText("printFov", formatDegrees(fov));
-    setPrintText("printUrl", window.location.href);
+    setPrintText("printUrl", " ");
 
     renderPrintPano(sceneData, params);
     renderPrintMap(sceneData, params);
@@ -547,7 +1172,7 @@
       return image.getAttribute("src") && !image.complete;
     });
     if (!images.length) {
-      window.setTimeout(callback, 650);
+      window.setTimeout(callback, 900);
       return;
     }
     var remaining = images.length;
@@ -555,7 +1180,7 @@
     function done() {
       if (finished) return;
       finished = true;
-      window.setTimeout(callback, 650);
+      window.setTimeout(callback, 900);
     }
     function tick() {
       remaining -= 1;
@@ -568,11 +1193,135 @@
     });
   }
 
+  function viewerStylesheetHref() {
+    var link = document.querySelector("link[href*='viewer.css']");
+    return link ? link.href : "/static/viewer.css";
+  }
+
+  function writePrintPopupShell(popup) {
+    var doc = popup.document;
+    doc.open();
+    doc.write([
+      "<!doctype html>",
+      "<html lang=\"pt-BR\">",
+      "<head>",
+      "<meta charset=\"utf-8\">",
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">",
+      "<title></title>",
+      "<link rel=\"stylesheet\" href=\"" + viewerStylesheetHref().replace(/"/g, "&quot;") + "\">",
+      "<style>",
+      "html,body{margin:0;background:#fff;color:#17202a;}",
+      "#printLayout{display:block!important;position:static!important;top:auto!important;left:auto!important;width:281mm;min-height:194mm;margin:0 auto;background:#fff;opacity:1!important;pointer-events:auto;}",
+      "@media print{body>*:not(#printLayout){display:none!important;}#printLayout{display:block!important;position:static!important;width:281mm;min-height:194mm;margin:0 auto;background:#fff;opacity:1!important;}}",
+      "</style>",
+      "</head>",
+      "<body><div style=\"padding:20px;font:14px Helvetica,Arial,sans-serif;color:#17202a;\">Preparando impressão.</div></body>",
+      "</html>"
+    ].join(""));
+    doc.close();
+  }
+
+  function openPrintPopup() {
+    var popup = window.open("about:blank", "_blank");
+    if (!popup) return null;
+    writePrintPopupShell(popup);
+    return popup;
+  }
+
+  function movePrintLayoutToPopup(popup) {
+    if (!popup || popup.closed || !printLayout || !printLayout.parentNode) return null;
+    var placeholder = document.createComment("print-layout-return");
+    var originalParent = printLayout.parentNode;
+    originalParent.insertBefore(placeholder, printLayout);
+    popup.document.body.innerHTML = "";
+    popup.document.body.appendChild(printLayout);
+    printLayout.removeAttribute("aria-hidden");
+
+    var restored = false;
+    return function restorePrintLayout() {
+      if (restored) return;
+      restored = true;
+      if (placeholder.parentNode) {
+        placeholder.parentNode.insertBefore(printLayout, placeholder);
+        placeholder.parentNode.removeChild(placeholder);
+      } else if (originalParent) {
+        originalParent.appendChild(printLayout);
+      }
+      printLayout.setAttribute("aria-hidden", "true");
+      body.classList.remove("print-preparing");
+    };
+  }
+
+  function waitForPopupImages(popup, callback) {
+    if (!popup || popup.closed) {
+      callback();
+      return;
+    }
+    var images = Array.prototype.slice.call(popup.document.querySelectorAll("img")).filter(function (image) {
+      return image.getAttribute("src") && !image.complete;
+    });
+    if (!images.length) {
+      window.setTimeout(callback, 250);
+      return;
+    }
+    var remaining = images.length;
+    var finished = false;
+    function done() {
+      if (finished) return;
+      finished = true;
+      window.setTimeout(callback, 250);
+    }
+    function tick() {
+      remaining -= 1;
+      if (remaining <= 0) done();
+    }
+    window.setTimeout(done, 1200);
+    images.forEach(function (image) {
+      image.addEventListener("load", tick, { once: true });
+      image.addEventListener("error", tick, { once: true });
+    });
+  }
+
+  function printPopupLayout(popup, restore) {
+    var cleaned = false;
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      restore();
+      try {
+        if (popup && !popup.closed) popup.close();
+      } catch (error) {}
+    }
+    popup.addEventListener("afterprint", cleanup);
+    popup.addEventListener("beforeunload", cleanup);
+    try {
+      popup.focus();
+      popup.print();
+    } catch (error) {
+      cleanup();
+    }
+  }
+
   function printGeoreferencedLayout() {
     if (!currentScene) return;
+    var popup = openPrintPopup();
+    if (!popup) {
+      window.alert("Permita pop-ups para imprimir sem exibir a URL do projeto.");
+      return;
+    }
     updatePrintLayout();
     waitForPrintImages(function () {
-      window.print();
+      var restore = movePrintLayoutToPopup(popup);
+      if (!restore) {
+        body.classList.remove("print-preparing");
+        try {
+          popup.close();
+        } catch (error) {}
+        return;
+      }
+      waitForPopupImages(popup, function () {
+        printPopupLayout(popup, restore);
+      });
     });
   }
 
@@ -675,6 +1424,7 @@
 
   function runCameraDirectionLoop() {
     updateCameraDirectionIndicator();
+    renderAnnotations();
     cameraDirectionFrame = requestAnimationFrame(runCameraDirectionLoop);
   }
 
@@ -746,10 +1496,85 @@
     });
   }
 
+  if (sketchToggle && annotationOverlay) {
+    sketchToggle.addEventListener("click", function () {
+      body.classList.toggle("sketch-active");
+      var active = body.classList.contains("sketch-active");
+      sketchToggle.classList.toggle("enabled", active);
+      sketchToggle.setAttribute("aria-pressed", active ? "true" : "false");
+      if (active && viewer) {
+        viewer.stopMovement();
+        viewer.setIdleMovement(null);
+      }
+      renderAnnotations();
+    });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-sketch-mode]"), function (button) {
+    button.addEventListener("click", function () {
+      setSketchMode(button.dataset.sketchMode || "draw");
+    });
+  });
+
+  if (sketchUndo) {
+    sketchUndo.addEventListener("click", function () {
+      undoSketch();
+    });
+  }
+
+  if (sketchFinishPolygon) {
+    sketchFinishPolygon.addEventListener("click", function () {
+      finishPolygon();
+    });
+  }
+
+  if (sketchClear) {
+    sketchClear.addEventListener("click", function () {
+      clearSketch();
+    });
+  }
+
+  if (annotationOverlay) {
+    annotationOverlay.addEventListener("pointerdown", beginSketch);
+    annotationOverlay.addEventListener("pointermove", drawSketch);
+    annotationOverlay.addEventListener("pointerup", endSketch);
+    annotationOverlay.addEventListener("pointercancel", endSketch);
+    annotationOverlay.addEventListener("dblclick", function (event) {
+      if (sketchMode === "polygon") {
+        event.preventDefault();
+        finishPolygon();
+        return;
+      }
+      if (sketchMode === "edit") {
+        var screenPoint = screenPointFromEvent(event);
+        var annotation = screenPoint ? findAnnotationAt(screenPoint) : null;
+        if (annotation && annotation.type === "text") {
+          event.preventDefault();
+          editTextAnnotation(annotation);
+        }
+      }
+    });
+  }
+
   window.addEventListener("keydown", function (event) {
     if ((event.ctrlKey || event.metaKey) && String(event.key || "").toLowerCase() === "p") {
       event.preventDefault();
       printGeoreferencedLayout();
+      return;
+    }
+    if (!body.classList.contains("sketch-active")) return;
+    if ((event.key === "Delete" || event.key === "Backspace") && selectedAnnotationId) {
+      event.preventDefault();
+      deleteSelectedAnnotation();
+      return;
+    }
+    if (event.key === "Escape") {
+      pendingPolygon = null;
+      selectedAnnotationId = null;
+      selectedVertexIndex = null;
+      editDrag = null;
+      updateSketchState();
+      renderAnnotations();
     }
   });
 
@@ -835,7 +1660,11 @@
     }
   });
 
-  window.addEventListener("resize", renderMap);
+  window.addEventListener("resize", function () {
+    renderMap();
+    resizeAnnotationOverlay();
+    renderAnnotations();
+  });
 
   function waitForScenes() {
     requestJSON("/api/projects/" + projectId + "/progress").then(function (state) {
@@ -872,6 +1701,10 @@
     renderSceneList();
     setupControls();
     setupMap();
+    loadSketchAnnotations();
+    setSketchMode("draw");
+    resizeAnnotationOverlay();
+    renderAnnotations();
     updateAutorotateButton();
     if (showBtnList && project.settings.sceneList !== false && project.scenes.length > 1) {
       sceneList.classList.add("enabled");

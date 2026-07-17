@@ -208,9 +208,163 @@ button {
   font-size: 13px;
 }
 
+.sketch-button {
+  min-width: 70px;
+  font-size: 13px;
+}
+
 .print-button {
   min-width: 52px;
   font-size: 13px;
+}
+
+.annotation-overlay,
+.print-annotation-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: none;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.sketch-active .annotation-overlay,
+.sketch-has-drawing .annotation-overlay {
+  display: block;
+}
+
+.sketch-active .annotation-overlay {
+  cursor: crosshair;
+  pointer-events: auto;
+}
+
+.sketch-mode-edit .annotation-overlay {
+  cursor: grab;
+}
+
+.print-annotation-overlay {
+  display: block;
+  z-index: 3;
+}
+
+.annotation-stroke,
+.annotation-polygon,
+.annotation-pending {
+  fill: none;
+  stroke: #ffeb3b;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.65));
+  pointer-events: none;
+}
+
+.annotation-polygon {
+  fill: rgba(255, 235, 59, 0.17);
+}
+
+.annotation-pending {
+  stroke-dasharray: 8 7;
+}
+
+.annotation-selected {
+  stroke: #65e4ff;
+}
+
+.annotation-vertex {
+  fill: #ffeb3b;
+  stroke: rgba(0, 0, 0, 0.72);
+  stroke-width: 2;
+}
+
+.annotation-selection-handle {
+  fill: #65e4ff;
+  stroke: rgba(0, 0, 0, 0.72);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.annotation-handle-active {
+  fill: #fff;
+  stroke: #65e4ff;
+  stroke-width: 3;
+}
+
+.annotation-text-shadow,
+.annotation-text {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  paint-order: stroke;
+  pointer-events: none;
+}
+
+.annotation-text-shadow {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.82);
+  stroke-linejoin: round;
+  stroke-width: 6px;
+}
+
+.annotation-text {
+  fill: #ffeb3b;
+  stroke: rgba(0, 0, 0, 0.1);
+  stroke-width: 1px;
+}
+
+.annotation-text.annotation-selected {
+  fill: #65e4ff;
+}
+
+.sketch-toolbar {
+  position: absolute;
+  right: 16px;
+  bottom: 62px;
+  z-index: 9;
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: min(680px, calc(100vw - 32px));
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(9, 14, 19, 0.76);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(16px);
+}
+
+.sketch-active .sketch-toolbar {
+  display: flex;
+}
+
+.sketch-toolbar span {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sketch-toolbar button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 12px;
+}
+
+.sketch-toolbar button.enabled,
+.sketch-toolbar button:hover {
+  border-color: rgba(255, 235, 59, 0.55);
+  background: rgba(118, 99, 16, 0.72);
+}
+
+.sketch-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .viewer-watermark {
@@ -727,8 +881,8 @@ button {
 
 .print-main {
   display: grid;
-  gap: 8px;
-  padding-top: 9px;
+  gap: 6px;
+  padding-top: 7px;
 }
 
 .print-card {
@@ -743,8 +897,8 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  min-height: 30px;
-  padding: 7px 9px;
+  min-height: 24px;
+  padding: 5px 8px;
   border-bottom: 1px solid #e5e9ef;
   background: #f5f7f9;
 }
@@ -758,7 +912,7 @@ button {
 
 .print-pano-frame {
   position: relative;
-  height: 270px;
+  height: 108mm;
   overflow: hidden;
   background: #111820;
 }
@@ -784,19 +938,19 @@ button {
   font-size: 12px;
 }
 
-.print-pano-live:not(:empty) + .print-fallback {
+.print-pano-live:not(:empty) ~ .print-fallback {
   display: none;
 }
 
 .print-grid {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
-  gap: 8px;
+  grid-template-columns: 0.95fr 1.05fr;
+  gap: 6px;
 }
 
 .print-map {
   position: relative;
-  height: 305px;
+  height: 43mm;
   overflow: hidden;
   background: #dfe5ea;
 }
@@ -913,8 +1067,8 @@ button {
 
 .print-fields div {
   display: grid;
-  grid-template-columns: 92px 1fr;
-  min-height: 27px;
+  grid-template-columns: 80px 1fr;
+  min-height: 15px;
   border-bottom: 1px solid #e8edf2;
 }
 
@@ -925,9 +1079,9 @@ button {
 .print-fields dt,
 .print-fields dd {
   margin: 0;
-  padding: 7px 8px;
-  font-size: 10px;
-  line-height: 13px;
+  padding: 3px 6px;
+  font-size: 8.5px;
+  line-height: 10px;
 }
 
 .print-fields dt {
@@ -1043,6 +1197,16 @@ button {
   .print-button {
     min-width: 45px;
     font-size: 12px;
+  }
+
+  .sketch-button {
+    min-width: 58px;
+    font-size: 12px;
+  }
+
+  .sketch-toolbar {
+    right: 10px;
+    bottom: 50px;
   }
 
   .viewer-watermark {

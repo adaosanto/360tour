@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 
-$storageDir = getenv('STORAGE_DIR') ?: __DIR__ . '/app/temp';
-$staticUrl = rtrim(getenv('STATIC_URL') ?: '/app/static', '/');
+$storageDir = 'C:/Recadastramento/fotos/app360/storage';
+$staticUrl = 'https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/static';
 
 function fail_response(int $status, string $message): void
 {
@@ -145,10 +145,21 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Visualizar tour</title>
-  <link rel="stylesheet" href="<?= h($staticUrl) ?>/viewer.css?v=project-view-17">
+  <link rel="stylesheet" href="<?= h($staticUrl) ?>/viewer.css?v=project-view-23">
 </head>
 <body class="tour-view" data-project-id="<?= h($projectId) ?>" data-initial-scene-id="<?= h($initialSceneId) ?>" data-show-btn-list="<?= h($showBtnList) ?>" data-project-file-base="<?= h($assetBase) ?>">
   <div id="pano"></div>
+  <svg id="annotationOverlay" class="annotation-overlay" aria-label="Anotações da vista"></svg>
+  <div id="sketchToolbar" class="sketch-toolbar" aria-label="Ferramentas de esboço">
+    <span>Esboço</span>
+    <button type="button" data-sketch-mode="draw">Rabisco</button>
+    <button type="button" data-sketch-mode="text">Texto</button>
+    <button type="button" data-sketch-mode="polygon">Polígono</button>
+    <button type="button" data-sketch-mode="edit">Editar</button>
+    <button type="button" id="sketchFinishPolygon">Fechar</button>
+    <button type="button" id="sketchUndo">Desfazer</button>
+    <button type="button" id="sketchClear">Limpar</button>
+  </div>
 
   <section id="emptyState" class="empty-state" hidden>
     <div id="emptyCover" class="empty-cover"></div>
@@ -173,6 +184,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
     <div class="viewerActions" aria-label="Acoes do tour">
       <button type="button" id="sceneListToggle" class="header-button scene-list-toggle" aria-label="Alternar lista de cenas">☰</button>
       <button type="button" id="metadataToggle" class="header-button metadata-toggle" aria-controls="metadataPanel" aria-expanded="true">Mapa</button>
+      <button type="button" id="sketchToggle" class="header-button sketch-button" aria-label="Ativar esboço">Esboço</button>
       <button type="button" id="printGeoButton" class="header-button print-button" aria-label="Imprimir layout georreferenciado">Print</button>
       <button type="button" id="autorotateToggle" class="header-button autorotate-button" aria-label="Alternar autorrotacao" aria-pressed="false">▶</button>
       <button type="button" id="fullscreenToggle" class="header-button fullscreen-button" aria-label="Alternar tela cheia">⛶</button>
@@ -253,6 +265,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
         </div>
         <div class="print-pano-frame">
           <div id="printPanoLive" class="print-pano-live" aria-label="Vista atual do panorama"></div>
+          <svg id="printAnnotationOverlay" class="print-annotation-overlay" aria-label="Anotações impressas"></svg>
           <div id="printPanoFallback" class="print-fallback">Preparando vista 360.</div>
         </div>
       </section>
@@ -294,6 +307,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
             <div><dt>FOV</dt><dd id="printFov">-</dd></div>
           </dl>
         </div>
+
       </section>
     </main>
 
@@ -307,6 +321,6 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <script>
     window.__PROJECT_DATA__ = <?= $projectJson ?>;
   </script>
-  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-17"></script>
+  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-23"></script>
 </body>
 </html>
