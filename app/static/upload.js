@@ -12,6 +12,7 @@
   var qualityInput = document.getElementById("jpegQuality");
   var qualityValue = document.getElementById("qualityValue");
   var showPhotoNames = document.getElementById("showPhotoNames");
+  var saveOriginalPhotos = document.getElementById("saveOriginalPhotos");
   var status = document.getElementById("uploadStatus");
   var statusMessage = document.getElementById("statusMessage");
   var statusPercent = document.getElementById("statusPercent");
@@ -186,6 +187,7 @@
     if (showPhotoNames && showPhotoNames.checked) {
       data.append("show_photo_names", "true");
     }
+    data.append("save_original_photos", saveOriginalPhotos && saveOriginalPhotos.checked ? "true" : "false");
     if (thumbnailFile) {
       data.append("thumbnail", thumbnailFile, thumbnailFile.name);
     }

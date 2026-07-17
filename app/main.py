@@ -62,6 +62,7 @@ DEFAULT_PROJECT_SETTINGS = {
     "sceneList": True,
     "mouseViewMode": "drag",
     "showPhotoNames": False,
+    "saveOriginalPhotos": True,
 }
 
 
@@ -103,7 +104,7 @@ def _normalize_project_settings(settings: dict | None) -> dict:
     normalized = DEFAULT_PROJECT_SETTINGS.copy()
     if isinstance(settings, dict):
         normalized.update(settings)
-    for key in ("autorotate", "controls", "fullscreen", "sceneList", "showPhotoNames"):
+    for key in ("autorotate", "controls", "fullscreen", "sceneList", "showPhotoNames", "saveOriginalPhotos"):
         normalized[key] = _coerce_bool(normalized.get(key), DEFAULT_PROJECT_SETTINGS[key])
     if normalized.get("mouseViewMode") not in {"drag", "qtvr"}:
         normalized["mouseViewMode"] = "drag"
@@ -582,7 +583,13 @@ def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url:
     return output.getvalue()
 
 
-def _create_project(tile_size: int, jpeg_quality: int, name: str | None = None, show_photo_names: bool = False) -> tuple[str, Path, dict]:
+def _create_project(
+    tile_size: int,
+    jpeg_quality: int,
+    name: str | None = None,
+    show_photo_names: bool = False,
+    save_original_photos: bool = True,
+) -> tuple[str, Path, dict]:
     validate_options(tile_size, jpeg_quality)
     project_id = str(uuid.uuid4())
     project_dir = TEMP_DIR / project_id
@@ -597,7 +604,10 @@ def _create_project(tile_size: int, jpeg_quality: int, name: str | None = None, 
         "tileSize": tile_size,
         "jpegQuality": jpeg_quality,
         "thumbnailPath": None,
-        "settings": _normalize_project_settings({"showPhotoNames": show_photo_names}),
+        "settings": _normalize_project_settings({
+            "showPhotoNames": show_photo_names,
+            "saveOriginalPhotos": save_original_photos,
+        }),
         "scenes": [],
     }
     save_project(project_dir, data)
@@ -660,6 +670,7 @@ def _process_files(project_id: str, files: list[str], tile_size: int, jpeg_quali
     project_dir = TEMP_DIR / project_id
     try:
         project = _normalize_project(load_project(project_dir))
+        save_original_photos = project["settings"].get("saveOriginalPhotos", True)
         total = len(files)
         progress_state[project_id] = {"status": "processing", "percent": 1, "message": "Iniciando processamento.", "errors": []}
         with _db_session() as session:
@@ -674,7 +685,15 @@ def _process_files(project_id: str, files: list[str], tile_size: int, jpeg_quali
                 progress_state[project_id].update({"status": "processing", "percent": round(overall, 1), "message": message, "step": step})
 
             try:
-                scene = process_panorama(upload_path, project_dir, next_index + offset, tile_size, jpeg_quality, set_progress)
+                scene = process_panorama(
+                    upload_path,
+                    project_dir,
+                    next_index + offset,
+                    tile_size,
+                    jpeg_quality,
+                    set_progress,
+                    save_original=save_original_photos,
+                )
                 project["scenes"].append(scene)
                 save_project(project_dir, project)
                 with _db_session() as session:
@@ -738,10 +757,17 @@ async def create_project(
     thumbnail: Annotated[UploadFile | None, File()] = None,
     project_name: Annotated[str | None, Form()] = None,
     show_photo_names: Annotated[bool, Form()] = False,
+    save_original_photos: Annotated[bool, Form()] = True,
     tile_size: Annotated[int, Form()] = 512,
     jpeg_quality: Annotated[int, Form()] = 85,
 ):
-    project_id, project_dir, project = _create_project(tile_size, jpeg_quality, project_name, show_photo_names)
+    project_id, project_dir, project = _create_project(
+        tile_size,
+        jpeg_quality,
+        project_name,
+        show_photo_names,
+        save_original_photos,
+    )
     try:
         thumbnail_path = await _save_thumbnail(thumbnail, project_dir)
         if thumbnail_path:
@@ -784,6 +810,61 @@ async def add_panoramas(
         upsert_project_record(session, project=project, project_dir=project_dir, status="processing")
     background_tasks.add_task(_process_files, project_id, [p.name for p in saved], tile_size, jpeg_quality)
     return {"projectId": project_id, "queued": len(saved)}
+
+
+@app.post("/api/projects/{project_id}/panoramas/upload")
+async def upload_panoramas_batch(
+    project_id: str,
+    files: Annotated[list[UploadFile], File()],
+    clear_existing: Annotated[bool, Form()] = False,
+):
+    project_dir = _project_dir(project_id)
+    if progress_state.get(project_id, {}).get("status") == "processing":
+        raise HTTPException(status_code=409, detail="O projeto ainda esta processando.")
+    incoming_dir = project_dir / "incoming"
+    if clear_existing:
+        for existing in incoming_dir.iterdir():
+            if existing.is_file():
+                existing.unlink(missing_ok=True)
+    saved = await _save_uploads(files, incoming_dir)
+    _touch(project_dir)
+    progress_state[project_id] = {
+        "status": "uploading",
+        "percent": 0,
+        "message": f"{len(saved)} arquivo(s) recebidos para processamento.",
+        "errors": [],
+    }
+    return {"projectId": project_id, "uploaded": len(saved), "files": [path.name for path in saved]}
+
+
+@app.post("/api/projects/{project_id}/panoramas/process")
+async def process_uploaded_panoramas(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    tile_size: Annotated[int | None, Form()] = None,
+    jpeg_quality: Annotated[int | None, Form()] = None,
+):
+    project_dir = _project_dir(project_id)
+    project = _normalize_project(load_project(project_dir))
+    tile_size = tile_size or int(project.get("tileSize", 512))
+    jpeg_quality = jpeg_quality or int(project.get("jpegQuality", 85))
+    validate_options(tile_size, jpeg_quality)
+    if progress_state.get(project_id, {}).get("status") == "processing":
+        raise HTTPException(status_code=409, detail="O projeto ainda esta processando.")
+    incoming_dir = project_dir / "incoming"
+    files = sorted(path.name for path in incoming_dir.iterdir() if path.is_file())
+    if not files:
+        raise HTTPException(status_code=400, detail="Nenhum panorama enviado para processar.")
+    progress_state[project_id] = {
+        "status": "queued",
+        "percent": 0,
+        "message": f"{len(files)} panorama(s) aguardando processamento.",
+        "errors": [],
+    }
+    with _db_session() as session:
+        upsert_project_record(session, project=project, project_dir=project_dir, status="processing")
+    background_tasks.add_task(_process_files, project_id, files, tile_size, jpeg_quality)
+    return {"projectId": project_id, "queued": len(files)}
 
 
 @app.get("/api/projects/{project_id}/progress")

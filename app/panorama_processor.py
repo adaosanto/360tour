@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
 from html import unescape
@@ -12,6 +13,15 @@ import numpy as np
 import py360convert
 from PIL import ExifTags, Image, ImageOps
 
+
+PIL_IMAGE_MAX_PIXELS = os.getenv("PIL_IMAGE_MAX_PIXELS", "1000000000").strip().lower()
+if PIL_IMAGE_MAX_PIXELS in {"", "0", "none", "false", "off"}:
+    Image.MAX_IMAGE_PIXELS = None
+else:
+    try:
+        Image.MAX_IMAGE_PIXELS = int(PIL_IMAGE_MAX_PIXELS)
+    except ValueError:
+        Image.MAX_IMAGE_PIXELS = 1000000000
 
 FACE_NAMES = ["f", "r", "b", "l", "u", "d"]
 
@@ -229,6 +239,7 @@ def process_panorama(
     tile_size: int,
     jpeg_quality: int,
     progress: Callable[[str, float, str], None] | None = None,
+    save_original: bool = True,
 ) -> dict:
     tile_size, jpeg_quality = validate_options(tile_size, jpeg_quality)
     scene_id = slugify(upload_path.name, f"cena-{index}")
@@ -269,13 +280,17 @@ def process_panorama(
         face_image = Image.fromarray(raw_face).convert("RGB")
         _save_face_tiles(face_image, scene_dir, face_name, levels, jpeg_quality)
 
-    shutil.copyfile(upload_path, project_dir / "uploads" / upload_path.name)
+    if save_original:
+        uploads_dir = project_dir / "uploads"
+        uploads_dir.mkdir(exist_ok=True)
+        shutil.copyfile(upload_path, uploads_dir / upload_path.name)
     notify("done", 0.95, f"Finalizando {upload_path.name}")
 
     return {
         "id": scene_id,
         "name": Path(upload_path.name).stem,
         "sourceFile": upload_path.name,
+        "originalSaved": bool(save_original),
         "tilePath": f"tiles/{scene_id}",
         "levels": levels,
         "faceSize": face_size,

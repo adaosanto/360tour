@@ -31,6 +31,8 @@
   var mapZoomIn = document.getElementById("mapZoomIn");
   var mapZoomOut = document.getElementById("mapZoomOut");
   var mapRecenter = document.getElementById("mapRecenter");
+  var printGeoButton = document.getElementById("printGeoButton");
+  var printLayout = document.getElementById("printLayout");
   var autorotateToggle = document.getElementById("autorotateToggle");
   var fullscreenToggle = document.getElementById("fullscreenToggle");
   var viewer = null;
@@ -42,6 +44,9 @@
   var mapState = { lat: 0, lon: 0, zoom: 16 };
   var mapDrag = null;
   var cameraDirectionFrame = null;
+  var printViewer = null;
+  var printScene = null;
+  var printSceneId = null;
   var baseTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
   var overlayTileUrlTemplate = "https://tiles.arcgis.com/tiles/MRbkurfLm8nmQrDq/arcgis/rest/services/RasterLrv2026_1/MapServer/tile/{level}/{row}/{col}";
   var initialized = false;
@@ -151,20 +156,30 @@
     autorotate = Marzipano.autorotate({ yawSpeed: 0.03, targetPitch: 0, targetFov: Math.PI / 2 });
 
     scenes = project.scenes.map(function (sceneData) {
-      var source = Marzipano.ImageUrlSource.fromString(projectFileUrl(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg"));
-      var geometry = new Marzipano.CubeGeometry(sceneData.levels);
-      var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
-      var view = new Marzipano.RectilinearView(sceneData.initialViewParameters, limiter);
-      var scene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
-
-      (sceneData.infoHotspots || []).forEach(function (hotspot) {
-        scene.hotspotContainer().createHotspot(createInfoHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
-      });
-      (sceneData.linkHotspots || []).forEach(function (hotspot) {
-        scene.hotspotContainer().createHotspot(createLinkHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
-      });
-      return { data: sceneData, scene: scene, view: view };
+      return { data: sceneData, scene: null, view: null };
     });
+  }
+
+  function ensureSceneLoaded(scene) {
+    if (scene.scene && scene.view) return scene;
+    var sceneData = scene.data;
+    var source = Marzipano.ImageUrlSource.fromString(projectFileUrl(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg"));
+    var geometry = new Marzipano.CubeGeometry(sceneData.levels);
+    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
+    var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
+    var view = new Marzipano.RectilinearView(initialView, limiter);
+    var marzipanoScene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
+
+    (sceneData.infoHotspots || []).forEach(function (hotspot) {
+      marzipanoScene.hotspotContainer().createHotspot(createInfoHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
+    });
+    (sceneData.linkHotspots || []).forEach(function (hotspot) {
+      marzipanoScene.hotspotContainer().createHotspot(createLinkHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
+    });
+
+    scene.scene = marzipanoScene;
+    scene.view = view;
+    return scene;
   }
 
   function renderSceneList() {
@@ -209,6 +224,7 @@
   }
 
   function switchScene(scene) {
+    ensureSceneLoaded(scene);
     currentScene = scene;
     viewer.stopMovement();
     viewer.setIdleMovement(null);
@@ -236,6 +252,35 @@
   function formatCoords(coordinates) {
     if (!coordinates) return "Sem coordenadas";
     return Number(coordinates.latitude).toFixed(7) + ", " + Number(coordinates.longitude).toFixed(7);
+  }
+
+  function readCoordinates(coordinates) {
+    if (!coordinates) return null;
+    var latitude = Number(coordinates.latitude);
+    var longitude = Number(coordinates.longitude);
+    if (!isFinite(latitude) || !isFinite(longitude)) return null;
+    return { latitude: latitude, longitude: longitude };
+  }
+
+  function formatDecimal(value, digits) {
+    var number = Number(value);
+    return isFinite(number) ? number.toFixed(digits) : "-";
+  }
+
+  function formatMeters(value) {
+    var number = Number(value);
+    return isFinite(number) ? number.toFixed(2) + " m" : "-";
+  }
+
+  function normalizeDegrees(value) {
+    var number = Number(value);
+    if (!isFinite(number)) return null;
+    return ((number % 360) + 360) % 360;
+  }
+
+  function formatDegrees(value) {
+    var number = normalizeDegrees(value);
+    return number == null ? "-" : number.toFixed(1) + " deg";
   }
 
   function formatPhotoDate(value) {
@@ -283,6 +328,32 @@
       "droneYaw",
       "heading"
     ]);
+  }
+
+  function horizontalFovDegrees(params) {
+    var verticalFov = Number(params.fov) || Math.PI / 2;
+    var width = Math.max(1, panoElement.clientWidth || window.innerWidth || 1);
+    var height = Math.max(1, panoElement.clientHeight || window.innerHeight || 1);
+    return 2 * Math.atan(Math.tan(verticalFov / 2) * (width / height)) * 180 / Math.PI;
+  }
+
+  function createViewDirectionElement() {
+    var direction = document.createElement("span");
+    var cone = document.createElement("span");
+    direction.className = "map-view-direction";
+    cone.className = "map-view-cone";
+    direction.appendChild(cone);
+    return direction;
+  }
+
+  function updateViewCone(indicator, params) {
+    var cone = indicator.querySelector(".map-view-cone");
+    if (!cone) return;
+    var length = 62;
+    var angle = Math.max(22, Math.min(110, horizontalFovDegrees(params)));
+    var width = 2 * length * Math.tan((angle * Math.PI / 180) / 2);
+    cone.style.width = Math.round(width) + "px";
+    cone.style.height = length + "px";
   }
 
   function updateMetadata(sceneData) {
@@ -342,6 +413,167 @@
       .replace("{level}", level)
       .replace("{col}", col)
       .replace("{row}", row);
+  }
+
+  function setPrintText(id, value) {
+    var element = document.getElementById(id);
+    if (element) element.textContent = value == null || value === "" ? "-" : String(value);
+  }
+
+  function renderPrintPano(sceneData, params) {
+    var container = document.getElementById("printPanoLive");
+    if (!container) return;
+    if (printSceneId !== sceneData.id || !printViewer || !printScene) {
+      container.innerHTML = "";
+      printViewer = new Marzipano.Viewer(container, {
+        controls: { mouseViewMode: project.settings.mouseViewMode || "drag" },
+        stage: { progressive: true }
+      });
+      var source = Marzipano.ImageUrlSource.fromString(projectFileUrl(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg"));
+      var geometry = new Marzipano.CubeGeometry(sceneData.levels);
+      var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
+      var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
+      var view = new Marzipano.RectilinearView(initialView, limiter);
+      printScene = {
+        scene: printViewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true }),
+        view: view
+      };
+      printSceneId = sceneData.id;
+    }
+    printScene.view.setParameters({
+      yaw: params.yaw,
+      pitch: params.pitch,
+      fov: params.fov
+    });
+    if (printViewer && typeof printViewer.updateSize === "function") {
+      printViewer.updateSize();
+    }
+    printScene.scene.switchTo();
+  }
+
+  function addPrintMapTile(container, url, col, row, left, top, className) {
+    var image = document.createElement("img");
+    image.alt = "";
+    image.className = className;
+    image.src = url;
+    image.style.left = Math.round(col * 256 - left) + "px";
+    image.style.top = Math.round(row * 256 - top) + "px";
+    container.appendChild(image);
+  }
+
+  function renderPrintMap(sceneData, params) {
+    var printMap = document.getElementById("printMap");
+    var printMapTiles = document.getElementById("printMapTiles");
+    var printMapView = document.getElementById("printMapView");
+    var printMapCone = document.getElementById("printMapCone");
+    if (!printMap || !printMapTiles || !printMapView || !printMapCone) return;
+
+    printMapTiles.innerHTML = "";
+    var metadata = sceneData.metadata || {};
+    var coordinates = readCoordinates(metadata.coordinates);
+    printMap.classList.toggle("missing", !coordinates);
+    if (!coordinates) return;
+
+    var width = printMap.clientWidth || 420;
+    var height = printMap.clientHeight || 305;
+    var zoom = Math.max(17, Math.min(20, mapState.zoom || 18));
+    var size = Math.pow(2, zoom);
+    var centerX = lonToWorldX(coordinates.longitude, zoom);
+    var centerY = latToWorldY(coordinates.latitude, zoom);
+    var left = centerX - width / 2;
+    var top = centerY - height / 2;
+    var minCol = Math.floor(left / 256);
+    var maxCol = Math.floor((left + width) / 256);
+    var minRow = Math.floor(top / 256);
+    var maxRow = Math.floor((top + height) / 256);
+
+    for (var row = minRow; row <= maxRow; row++) {
+      if (row < 0 || row >= size) continue;
+      for (var col = minCol; col <= maxCol; col++) {
+        var wrappedCol = ((col % size) + size) % size;
+        addPrintMapTile(printMapTiles, tileUrl(baseTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-base");
+        addPrintMapTile(printMapTiles, tileUrl(overlayTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-overlay");
+      }
+    }
+
+    var bearing = cameraHeadingOffset(sceneData) + (params.yaw * 180 / Math.PI);
+    bearing = ((bearing % 360) + 360) % 360;
+    var length = 62;
+    var angle = Math.max(22, Math.min(110, horizontalFovDegrees(params)));
+    var coneWidth = 2 * length * Math.tan((angle * Math.PI / 180) / 2);
+    printMapCone.style.width = Math.round(coneWidth) + "px";
+    printMapCone.style.height = length + "px";
+    printMapView.style.transform = "rotate(" + bearing.toFixed(2) + "deg)";
+  }
+
+  function updatePrintLayout() {
+    if (!printLayout || !currentScene || !currentScene.view) return;
+    body.classList.add("print-preparing");
+
+    var sceneData = currentScene.data;
+    var metadata = sceneData.metadata || {};
+    var coordinates = readCoordinates(metadata.coordinates);
+    var params = currentScene.view.parameters();
+    var cameraYaw = cameraHeadingOffset(sceneData);
+    var viewYaw = cameraYaw + (params.yaw * 180 / Math.PI);
+    var fov = horizontalFovDegrees(params);
+
+    setPrintText("printProjectName", project.name || "Tour 360");
+    setPrintText("printSceneTitle", sceneData.name || sceneData.id || "Cena");
+    setPrintText("printPhotoName", sceneData.sourceFile || sceneData.name || sceneData.id || "-");
+    setPrintText("printGeneratedAt", new Date().toLocaleString("pt-BR"));
+    setPrintText("printArcgisPoint", metadata.arcgisPointId ? "PONTO " + metadata.arcgisPointId : "-");
+    setPrintText("printCoords", coordinates ? formatCoords(metadata.coordinates) : "Sem coordenadas");
+    setPrintText("printLatitude", coordinates ? formatDecimal(coordinates.latitude, 8) : "-");
+    setPrintText("printLongitude", coordinates ? formatDecimal(coordinates.longitude, 8) : "-");
+    setPrintText("printAltitude", formatMeters(metadata.altitude));
+    setPrintText("printHeight", formatMeters(metadata.height));
+    setPrintText("printPhotoDate", formatPhotoDate(metadata.takenAt));
+    setPrintText("printCameraYaw", formatDegrees(cameraYaw));
+    setPrintText("printViewYaw", formatDegrees(viewYaw));
+    setPrintText("printFov", formatDegrees(fov));
+    setPrintText("printUrl", window.location.href);
+
+    renderPrintPano(sceneData, params);
+    renderPrintMap(sceneData, params);
+  }
+
+  function waitForPrintImages(callback) {
+    if (!printLayout) {
+      callback();
+      return;
+    }
+    var images = Array.prototype.slice.call(printLayout.querySelectorAll("img")).filter(function (image) {
+      return image.getAttribute("src") && !image.complete;
+    });
+    if (!images.length) {
+      window.setTimeout(callback, 650);
+      return;
+    }
+    var remaining = images.length;
+    var finished = false;
+    function done() {
+      if (finished) return;
+      finished = true;
+      window.setTimeout(callback, 650);
+    }
+    function tick() {
+      remaining -= 1;
+      if (remaining <= 0) done();
+    }
+    window.setTimeout(done, 1400);
+    images.forEach(function (image) {
+      image.addEventListener("load", tick, { once: true });
+      image.addEventListener("error", tick, { once: true });
+    });
+  }
+
+  function printGeoreferencedLayout() {
+    if (!currentScene) return;
+    updatePrintLayout();
+    waitForPrintImages(function () {
+      window.print();
+    });
   }
 
   function addMapTile(url, col, row, left, top, className) {
@@ -422,7 +654,7 @@
       marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
       marker.title = details.length ? details.join(" | ") : "Abrir foto";
       if (currentScene && point.scene.data.id === currentScene.data.id) {
-        marker.appendChild(document.createElement("span")).className = "map-camera-direction";
+        marker.appendChild(createViewDirectionElement());
       }
       marker.addEventListener("click", function () { switchScene(point.scene); });
       mapMarkers.appendChild(marker);
@@ -432,12 +664,13 @@
 
   function updateCameraDirectionIndicator() {
     if (!currentScene || !mapMarkers) return;
-    var indicator = mapMarkers.querySelector(".map-camera-direction");
+    var indicator = mapMarkers.querySelector(".map-view-direction");
     if (!indicator) return;
     var params = currentScene.view.parameters();
     var bearing = cameraHeadingOffset(currentScene.data) + (params.yaw * 180 / Math.PI);
     bearing = ((bearing % 360) + 360) % 360;
-    indicator.style.transform = "translate(-50%, -100%) rotate(" + bearing.toFixed(2) + "deg)";
+    updateViewCone(indicator, params);
+    indicator.style.transform = "rotate(" + bearing.toFixed(2) + "deg)";
   }
 
   function runCameraDirectionLoop() {
@@ -505,6 +738,27 @@
   mapRecenter.addEventListener("click", function () {
     fitMapToPoints();
     renderMap();
+  });
+
+  if (printGeoButton) {
+    printGeoButton.addEventListener("click", function () {
+      printGeoreferencedLayout();
+    });
+  }
+
+  window.addEventListener("keydown", function (event) {
+    if ((event.ctrlKey || event.metaKey) && String(event.key || "").toLowerCase() === "p") {
+      event.preventDefault();
+      printGeoreferencedLayout();
+    }
+  });
+
+  window.addEventListener("beforeprint", function () {
+    updatePrintLayout();
+  });
+
+  window.addEventListener("afterprint", function () {
+    body.classList.remove("print-preparing");
   });
 
   photoMap.addEventListener("pointerdown", function (event) {

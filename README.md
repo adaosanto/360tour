@@ -6,6 +6,7 @@ Aplicacao simples em FastAPI para transformar panoramas 360 equiretangulares em 
 
 - Criacao de projeto por UUID com thumbnail opcional salva em disco.
 - Upload de panoramas JPEG, PNG ou TIFF dentro do editor.
+- Upload em lotes no editor, com progresso por bytes para selecoes grandes.
 - Validacao de panoramas 2:1.
 - Conversao equiretangular para cubemap com `py360convert`.
 - Geracao de piramide multirresolucao de tiles JPEG com Pillow.
@@ -123,3 +124,13 @@ Configure a idade maxima em horas com:
 ```bash
 export TEMP_PROJECT_TTL_HOURS=24
 ```
+
+## Panoramas grandes
+
+O editor envia selecoes grandes em lotes menores antes de iniciar o processamento. Para panoramas de muitos megapixels, ajuste o limite de seguranca do Pillow:
+
+```bash
+export PIL_IMAGE_MAX_PIXELS=1000000000
+```
+
+Use `PIL_IMAGE_MAX_PIXELS=0` para desativar esse limite em ambiente controlado.

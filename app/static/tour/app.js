@@ -56,25 +56,36 @@
   }
 
   var scenes = data.scenes.map(function (sceneData) {
+    return { data: sceneData, scene: null, view: null };
+  });
+
+  function ensureSceneLoaded(scene) {
+    if (scene.scene && scene.view) return scene;
+    var sceneData = scene.data;
     var source = Marzipano.ImageUrlSource.fromString(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg");
     var geometry = new Marzipano.CubeGeometry(sceneData.levels);
     var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
-    var view = new Marzipano.RectilinearView(sceneData.initialViewParameters, limiter);
-    var scene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
+    var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
+    var view = new Marzipano.RectilinearView(initialView, limiter);
+    var marzipanoScene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
 
-    sceneData.infoHotspots.forEach(function (hotspot) {
-      scene.hotspotContainer().createHotspot(createInfoHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
+    (sceneData.infoHotspots || []).forEach(function (hotspot) {
+      marzipanoScene.hotspotContainer().createHotspot(createInfoHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
     });
-    sceneData.linkHotspots.forEach(function (hotspot) {
-      scene.hotspotContainer().createHotspot(createLinkHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
+    (sceneData.linkHotspots || []).forEach(function (hotspot) {
+      marzipanoScene.hotspotContainer().createHotspot(createLinkHotspot(hotspot), { yaw: hotspot.yaw, pitch: hotspot.pitch });
     });
-    return { data: sceneData, scene: scene, view: view };
-  });
+
+    scene.scene = marzipanoScene;
+    scene.view = view;
+    return scene;
+  }
 
   function switchScene(scene) {
+    ensureSceneLoaded(scene);
     viewer.stopMovement();
     viewer.setIdleMovement(null);
-    scene.view.setParameters(scene.data.initialViewParameters);
+    scene.view.setParameters(scene.data.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 });
     scene.scene.switchTo();
     currentScene = scene;
     currentSceneId = scene.data.id;
@@ -165,6 +176,32 @@
       "droneYaw",
       "heading"
     ]);
+  }
+
+  function horizontalFovDegrees(params) {
+    var verticalFov = Number(params.fov) || Math.PI / 2;
+    var width = Math.max(1, panoElement.clientWidth || window.innerWidth || 1);
+    var height = Math.max(1, panoElement.clientHeight || window.innerHeight || 1);
+    return 2 * Math.atan(Math.tan(verticalFov / 2) * (width / height)) * 180 / Math.PI;
+  }
+
+  function createViewDirectionElement() {
+    var direction = document.createElement("span");
+    var cone = document.createElement("span");
+    direction.className = "map-view-direction";
+    cone.className = "map-view-cone";
+    direction.appendChild(cone);
+    return direction;
+  }
+
+  function updateViewCone(indicator, params) {
+    var cone = indicator.querySelector(".map-view-cone");
+    if (!cone) return;
+    var length = 62;
+    var angle = Math.max(22, Math.min(110, horizontalFovDegrees(params)));
+    var width = 2 * length * Math.tan((angle * Math.PI / 180) / 2);
+    cone.style.width = Math.round(width) + "px";
+    cone.style.height = length + "px";
   }
 
   function updateMapCaption(sceneData) {
@@ -303,7 +340,7 @@
       marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
       marker.title = details.length ? details.join(" | ") : "Abrir foto";
       if (point.scene.data.id === currentSceneId) {
-        marker.appendChild(document.createElement("span")).className = "map-camera-direction";
+        marker.appendChild(createViewDirectionElement());
       }
       marker.addEventListener("click", function () {
         switchScene(point.scene);
@@ -315,12 +352,13 @@
 
   function updateCameraDirectionIndicator() {
     if (!currentScene || !mapMarkers) return;
-    var indicator = mapMarkers.querySelector(".map-camera-direction");
+    var indicator = mapMarkers.querySelector(".map-view-direction");
     if (!indicator) return;
     var params = currentScene.view.parameters();
     var bearing = cameraHeadingOffset(currentScene.data) + (params.yaw * 180 / Math.PI);
     bearing = ((bearing % 360) + 360) % 360;
-    indicator.style.transform = "translate(-50%, -100%) rotate(" + bearing.toFixed(2) + "deg)";
+    updateViewCone(indicator, params);
+    indicator.style.transform = "rotate(" + bearing.toFixed(2) + "deg)";
   }
 
   function runCameraDirectionLoop() {

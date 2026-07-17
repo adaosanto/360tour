@@ -854,6 +854,11 @@ button.upload-submit.loading {
   display: none;
 }
 
+.small-upload:has(input:disabled) {
+  cursor: wait;
+  opacity: 0.58;
+}
+
 .autorename-panel textarea {
   min-height: 92px;
   font-size: 12px;

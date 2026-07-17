@@ -145,7 +145,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Visualizar tour</title>
-  <link rel="stylesheet" href="<?= h($staticUrl) ?>/viewer.css?v=project-view-13">
+  <link rel="stylesheet" href="<?= h($staticUrl) ?>/viewer.css?v=project-view-17">
 </head>
 <body class="tour-view" data-project-id="<?= h($projectId) ?>" data-initial-scene-id="<?= h($initialSceneId) ?>" data-show-btn-list="<?= h($showBtnList) ?>" data-project-file-base="<?= h($assetBase) ?>">
   <div id="pano"></div>
@@ -173,6 +173,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
     <div class="viewerActions" aria-label="Acoes do tour">
       <button type="button" id="sceneListToggle" class="header-button scene-list-toggle" aria-label="Alternar lista de cenas">☰</button>
       <button type="button" id="metadataToggle" class="header-button metadata-toggle" aria-controls="metadataPanel" aria-expanded="true">Mapa</button>
+      <button type="button" id="printGeoButton" class="header-button print-button" aria-label="Imprimir layout georreferenciado">Print</button>
       <button type="button" id="autorotateToggle" class="header-button autorotate-button" aria-label="Alternar autorrotacao" aria-pressed="false">▶</button>
       <button type="button" id="fullscreenToggle" class="header-button fullscreen-button" aria-label="Alternar tela cheia">⛶</button>
     </div>
@@ -229,10 +230,83 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
     Departamento de Geotecnologia
   </div>
 
+  <section id="printLayout" class="print-layout" aria-hidden="true">
+    <header class="print-header">
+      <img class="print-logo" src="<?= h($staticUrl) ?>/logo.png" alt="">
+      <div class="print-title">
+        <span>Departamento de Geotecnologia</span>
+        <h1>Registro fotografico georreferenciado</h1>
+        <p id="printProjectName">Tour 360</p>
+      </div>
+      <div class="print-system">
+        <strong>WGS84</strong>
+        <span>EPSG:4326</span>
+        <span id="printGeneratedAt"></span>
+      </div>
+    </header>
+
+    <main class="print-main">
+      <section class="print-card print-pano-card">
+        <div class="print-card-title">
+          <h2>Vista 360</h2>
+          <span id="printSceneTitle"></span>
+        </div>
+        <div class="print-pano-frame">
+          <div id="printPanoLive" class="print-pano-live" aria-label="Vista atual do panorama"></div>
+          <div id="printPanoFallback" class="print-fallback">Preparando vista 360.</div>
+        </div>
+      </section>
+
+      <section class="print-grid">
+        <div class="print-card">
+          <div class="print-card-title">
+            <h2>Mapa georreferenciado</h2>
+            <span>Norte acima</span>
+          </div>
+          <div id="printMap" class="print-map">
+            <div id="printMapTiles" class="print-map-tiles"></div>
+            <div id="printMapMarker" class="print-map-marker">
+              <span id="printMapView" class="print-map-view">
+                <span id="printMapCone" class="print-map-cone"></span>
+              </span>
+            </div>
+            <div id="printMapFallback" class="print-map-fallback">Sem coordenadas para mapa.</div>
+            <div class="print-map-north">N</div>
+            <div class="print-map-crs">WGS84 / EPSG:4326</div>
+          </div>
+        </div>
+
+        <div class="print-card">
+          <div class="print-card-title">
+            <h2>Dados da foto</h2>
+            <span id="printPhotoName"></span>
+          </div>
+          <dl class="print-fields">
+            <div><dt>Ponto ArcGIS</dt><dd id="printArcgisPoint">-</dd></div>
+            <div><dt>Coordenadas</dt><dd id="printCoords">Sem coordenadas</dd></div>
+            <div><dt>Latitude</dt><dd id="printLatitude">-</dd></div>
+            <div><dt>Longitude</dt><dd id="printLongitude">-</dd></div>
+            <div><dt>Altitude</dt><dd id="printAltitude">-</dd></div>
+            <div><dt>Altura</dt><dd id="printHeight">-</dd></div>
+            <div><dt>Data da foto</dt><dd id="printPhotoDate">-</dd></div>
+            <div><dt>Yaw camera</dt><dd id="printCameraYaw">-</dd></div>
+            <div><dt>Yaw visual</dt><dd id="printViewYaw">-</dd></div>
+            <div><dt>FOV</dt><dd id="printFov">-</dd></div>
+          </dl>
+        </div>
+      </section>
+    </main>
+
+    <footer class="print-footer">
+      <span id="printUrl"></span>
+      <strong>Departamento de Geotecnologia</strong>
+    </footer>
+  </section>
+
   <script src="<?= h($staticUrl) ?>/marzipano.js"></script>
   <script>
     window.__PROJECT_DATA__ = <?= $projectJson ?>;
   </script>
-  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-13"></script>
+  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-17"></script>
 </body>
 </html>

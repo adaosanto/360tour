@@ -9,6 +9,7 @@
   var progressText = document.getElementById("progressText");
   var progressBar = document.getElementById("progressBar");
   var viewReadout = document.getElementById("viewReadout");
+  var addFilesInput = document.getElementById("addFiles");
   var autorenameDistance = document.getElementById("autorenameDistance");
   var autorenameCsvViewUrl = document.getElementById("autorenameCsvViewUrl");
   var autorenameCsvCiclo = document.getElementById("autorenameCsvCiclo");
@@ -35,7 +36,10 @@
   var selectedHotspot = null;
   var placingHotspot = null;
   var autorenamePreviewPayload = null;
+  var uploadWorkflowActive = false;
   var autorenameTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
+  var uploadBatchMaxFiles = 5;
+  var uploadBatchMaxBytes = 750 * 1024 * 1024;
 
   function requestJSON(url, options) {
     return fetch(url, options || {}).then(function (response) {
@@ -55,6 +59,25 @@
     });
   }
 
+  function responsePayload(xhr) {
+    try {
+      return JSON.parse(xhr.responseText || "{}");
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function formatBytes(bytes) {
+    var units = ["B", "KB", "MB", "GB", "TB"];
+    var value = Number(bytes) || 0;
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return (unit === 0 ? value.toFixed(0) : value.toFixed(value >= 10 ? 1 : 2)) + " " + units[unit];
+  }
+
   function normalizeSettings(settings) {
     settings = settings || {};
     return {
@@ -63,7 +86,8 @@
       fullscreen: settings.fullscreen !== false,
       sceneList: settings.sceneList !== false,
       mouseViewMode: settings.mouseViewMode === "qtvr" ? "qtvr" : "drag",
-      showPhotoNames: !!settings.showPhotoNames
+      showPhotoNames: !!settings.showPhotoNames,
+      saveOriginalPhotos: settings.saveOriginalPhotos !== false
     };
   }
 
@@ -76,6 +100,14 @@
       scene.linkHotspots = Array.isArray(scene.linkHotspots) ? scene.linkHotspots : [];
     });
     return payload;
+  }
+
+  function isActiveProgressStatus(status) {
+    return status === "uploading" || status === "queued" || status === "processing";
+  }
+
+  function isServerProcessingStatus(status) {
+    return status === "queued" || status === "processing";
   }
 
   function setAutorenameStatus(message, isError) {
@@ -317,13 +349,22 @@
 
   function buildScenes() {
     scenes = project.scenes.map(function (sceneData) {
-      var source = Marzipano.ImageUrlSource.fromString("/project-files/" + projectId + "/" + sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg");
-      var geometry = new Marzipano.CubeGeometry(sceneData.levels);
-      var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
-      var view = new Marzipano.RectilinearView(sceneData.initialViewParameters, limiter);
-      var scene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
-      return { data: sceneData, scene: scene, view: view, hotspotHandles: [] };
+      return { data: sceneData, scene: null, view: null, hotspotHandles: [] };
     });
+  }
+
+  function ensureSceneLoaded(scene) {
+    if (scene.scene && scene.view) return scene;
+    var sceneData = scene.data;
+    var source = Marzipano.ImageUrlSource.fromString("/project-files/" + projectId + "/" + sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg");
+    var geometry = new Marzipano.CubeGeometry(sceneData.levels);
+    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
+    var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
+    var view = new Marzipano.RectilinearView(initialView, limiter);
+    scene.scene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
+    scene.view = view;
+    scene.hotspotHandles = [];
+    return scene;
   }
 
   function rebuildViewer() {
@@ -338,8 +379,9 @@
     if (!scenes[index]) return;
     currentIndex = index;
     selectedHotspot = null;
-    scenes[index].view.setParameters(scenes[index].data.initialViewParameters);
-    scenes[index].scene.switchTo();
+    var scene = ensureSceneLoaded(scenes[index]);
+    scene.view.setParameters(scene.data.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 });
+    scene.scene.switchTo();
     renderSceneList();
     renderCurrentSceneForm();
     renderHotspots();
@@ -369,6 +411,7 @@
     document.getElementById("settingFullscreen").checked = project.settings.fullscreen !== false;
     document.getElementById("settingSceneList").checked = project.settings.sceneList !== false;
     document.getElementById("settingShowPhotoNames").checked = !!project.settings.showPhotoNames;
+    document.getElementById("settingSaveOriginalPhotos").checked = project.settings.saveOriginalPhotos !== false;
     document.getElementById("settingMouseMode").value = project.settings.mouseViewMode || "drag";
     document.getElementById("controls").hidden = project.settings.controls === false;
   }
@@ -388,6 +431,7 @@
   }
 
   function clearHotspotHandles(scene) {
+    if (!scene.hotspotHandles) scene.hotspotHandles = [];
     scene.hotspotHandles.forEach(function (handle) { handle.destroy(); });
     scene.hotspotHandles = [];
   }
@@ -396,6 +440,7 @@
     scenes.forEach(clearHotspotHandles);
     var scene = currentScene();
     if (!scene) return;
+    ensureSceneLoaded(scene);
     scene.data.infoHotspots.forEach(function (hotspot) {
       scene.hotspotHandles.push(scene.scene.hotspotContainer().createHotspot(makeHotspotElement(hotspot, "info"), { yaw: hotspot.yaw, pitch: hotspot.pitch }));
     });
@@ -538,7 +583,7 @@
     renderHotspots();
   });
 
-  ["settingAutorotate", "settingControls", "settingFullscreen", "settingSceneList", "settingShowPhotoNames"].forEach(function (id) {
+  ["settingAutorotate", "settingControls", "settingFullscreen", "settingSceneList", "settingShowPhotoNames", "settingSaveOriginalPhotos"].forEach(function (id) {
     document.getElementById(id).addEventListener("change", function (event) {
       var key = id.replace("setting", "");
       key = key.charAt(0).toLowerCase() + key.slice(1);
@@ -645,30 +690,144 @@
     });
   }
 
-  document.getElementById("addFiles").addEventListener("change", function (event) {
-    if (!event.target.files.length) return;
+  function supportedPanoramaFile(file) {
+    return /\.(jpe?g|png|tiff?)$/i.test(file.name);
+  }
+
+  function makeUploadBatches(files) {
+    var batches = [];
+    var current = [];
+    var currentBytes = 0;
+    files.forEach(function (file) {
+      var wouldExceedCount = current.length >= uploadBatchMaxFiles;
+      var wouldExceedBytes = current.length && currentBytes + file.size > uploadBatchMaxBytes;
+      if (wouldExceedCount || wouldExceedBytes) {
+        batches.push(current);
+        current = [];
+        currentBytes = 0;
+      }
+      current.push(file);
+      currentBytes += file.size;
+    });
+    if (current.length) batches.push(current);
+    return batches;
+  }
+
+  function sendUploadBatch(batch, index, totalBatches, uploadedBytes, totalBytes) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      var formData = new FormData();
+      batch.forEach(function (file) {
+        formData.append("files", file, file.name);
+      });
+      if (index === 0) {
+        formData.append("clear_existing", "true");
+      }
+      xhr.open("POST", "/api/projects/" + projectId + "/panoramas/upload");
+      xhr.upload.addEventListener("progress", function (event) {
+        if (!event.lengthComputable) {
+          progressText.textContent = "Enviando lote " + (index + 1) + " de " + totalBatches + "...";
+          return;
+        }
+        var sent = uploadedBytes + event.loaded;
+        var percent = Math.min(99, (sent / totalBytes) * 100);
+        progressBar.value = percent;
+        progressText.textContent = "Upload " + Math.round(percent) + "% | lote " + (index + 1) + "/" + totalBatches + " | " + formatBytes(sent) + " de " + formatBytes(totalBytes);
+      });
+      xhr.addEventListener("load", function () {
+        var payload = responsePayload(xhr);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload);
+          return;
+        }
+        reject(new Error(payload.detail || "Falha ao enviar lote " + (index + 1) + "."));
+      });
+      xhr.addEventListener("error", function () {
+        reject(new Error("Falha de conexao durante o upload do lote " + (index + 1) + "."));
+      });
+      xhr.addEventListener("abort", function () {
+        reject(new Error("Upload cancelado."));
+      });
+      xhr.send(formData);
+    });
+  }
+
+  function processUploadedPanoramas() {
     var formData = new FormData();
-    Array.prototype.forEach.call(event.target.files, function (file) { formData.append("files", file); });
+    return requestJSON("/api/projects/" + projectId + "/panoramas/process", {
+      method: "POST",
+      body: formData
+    });
+  }
+
+  function uploadFiles(files) {
+    var invalid = files.filter(function (file) { return !supportedPanoramaFile(file); });
+    if (invalid.length) {
+      throw new Error("Arquivo em formato nao permitido: " + invalid[0].name);
+    }
+    var totalBytes = files.reduce(function (sum, file) { return sum + file.size; }, 0);
+    var batches = makeUploadBatches(files);
+    var uploadedBytes = 0;
+    uploadWorkflowActive = true;
     progressBox.hidden = false;
-    progressText.textContent = "Enviando novos panoramas...";
-    fetch("/api/projects/" + projectId + "/panoramas", { method: "POST", body: formData })
-      .then(function (response) { return response.json().then(function (payload) { if (!response.ok) throw new Error(payload.detail); return payload; }); })
-      .then(pollProgress)
-      .catch(function (error) { progressText.textContent = error.message; });
-  });
+    progressBar.value = 0;
+    progressText.textContent = "Preparando upload de " + files.length + " panorama(s), " + formatBytes(totalBytes) + ".";
+    if (addFilesInput) addFilesInput.disabled = true;
+    progressText.textContent = "Salvando configuracoes do projeto...";
+    return saveProject().then(function () {
+      return batches.reduce(function (promise, batch, index) {
+        return promise.then(function () {
+          return sendUploadBatch(batch, index, batches.length, uploadedBytes, totalBytes).then(function () {
+            uploadedBytes += batch.reduce(function (sum, file) { return sum + file.size; }, 0);
+            progressBar.value = Math.min(99, (uploadedBytes / totalBytes) * 100);
+            progressText.textContent = "Lote " + (index + 1) + " de " + batches.length + " enviado. " + formatBytes(uploadedBytes) + " de " + formatBytes(totalBytes) + ".";
+          });
+        });
+      }, Promise.resolve());
+    }).then(function () {
+      progressBar.value = 100;
+      progressText.textContent = "Upload concluido. Enfileirando processamento...";
+      return processUploadedPanoramas();
+    }).then(function () {
+      progressText.textContent = "Processamento iniciado para " + files.length + " panorama(s).";
+      pollProgress();
+    }).catch(function (error) {
+      uploadWorkflowActive = false;
+      progressText.textContent = error.message;
+      if (addFilesInput) addFilesInput.disabled = false;
+    });
+  }
+
+  if (addFilesInput) {
+    addFilesInput.addEventListener("change", function (event) {
+      var files = Array.prototype.slice.call(event.target.files || []);
+      event.target.value = "";
+      if (!files.length) return;
+      try {
+        uploadFiles(files);
+      } catch (error) {
+        progressBox.hidden = false;
+        progressText.textContent = error.message;
+      }
+    });
+  }
 
   function pollProgress() {
     requestJSON("/api/projects/" + projectId + "/progress").then(function (state) {
       progressBox.hidden = state.status === "done" && state.percent >= 100;
       progressText.textContent = state.message || state.status;
       progressBar.value = state.percent || 0;
-      if (state.status === "processing" || state.status === "ready") {
+      if (isActiveProgressStatus(state.status)) {
         setTimeout(pollProgress, 900);
       } else {
+        uploadWorkflowActive = false;
+        if (addFilesInput) addFilesInput.disabled = false;
         loadProject();
       }
     }).catch(function (error) {
+      uploadWorkflowActive = false;
       progressText.textContent = error.message;
+      if (addFilesInput) addFilesInput.disabled = false;
     });
   }
 
@@ -721,13 +880,17 @@
   }
 
   function pollInitialProgress() {
+    if (uploadWorkflowActive) return;
     requestJSON("/api/projects/" + projectId + "/progress").then(function (state) {
-      if (state.status === "processing" || state.status === "ready") {
+      if (uploadWorkflowActive) return;
+      if (isServerProcessingStatus(state.status)) {
         progressBox.hidden = false;
         progressText.textContent = state.message || "Processando";
         progressBar.value = state.percent || 0;
         setTimeout(function () {
+          if (uploadWorkflowActive) return;
           requestJSON("/api/projects/" + projectId).then(function (payload) {
+            if (uploadWorkflowActive) return;
             project = normalizeProject(payload);
             rebuildViewer();
             pollInitialProgress();
