@@ -101,6 +101,17 @@ def _coerce_bool(value, default: bool) -> bool:
     return bool(value)
 
 
+def _coerce_signed_degrees(value) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number):
+        return 0.0
+    number = ((number + 180) % 360) - 180
+    return 0.0 if abs(number) < 0.000001 else round(number, 6)
+
+
 def _normalize_project_settings(settings: dict | None) -> dict:
     normalized = DEFAULT_PROJECT_SETTINGS.copy()
     if isinstance(settings, dict):
@@ -118,6 +129,7 @@ def _normalize_project(project: dict) -> dict:
     for scene in project["scenes"]:
         scene.setdefault("infoHotspots", [])
         scene.setdefault("linkHotspots", [])
+        scene["headingOffset"] = _coerce_signed_degrees(scene.get("headingOffset", 0))
     return project
 
 
@@ -1061,6 +1073,7 @@ async def save_project_data(project_id: str, request: Request):
     current = _normalize_project(load_project(project_dir))
     current["settings"] = _normalize_project_settings(payload["settings"])
     current["scenes"] = payload["scenes"]
+    current = _normalize_project(current)
     save_project(project_dir, current)
     _touch(project_dir)
     with _db_session() as session:

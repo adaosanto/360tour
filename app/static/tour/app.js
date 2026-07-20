@@ -166,9 +166,16 @@
     return 0;
   }
 
+  function normalizeSignedDegrees(value) {
+    var number = Number(value);
+    if (!isFinite(number)) return 0;
+    number = ((number + 180) % 360 + 360) % 360 - 180;
+    return Math.abs(number) < 0.000001 ? 0 : number;
+  }
+
   function cameraHeadingOffset(sceneData) {
     var metadata = sceneData.metadata || {};
-    return readNumericMetadata(metadata, [
+    var metadataHeading = readNumericMetadata(metadata, [
       "cameraYaw",
       "cameraYawDegree",
       "gimbalYawDegree",
@@ -180,6 +187,7 @@
       "droneYaw",
       "heading"
     ]);
+    return metadataHeading + normalizeSignedDegrees(sceneData.headingOffset);
   }
 
   function horizontalFovDegrees(params) {

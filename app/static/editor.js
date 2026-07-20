@@ -26,6 +26,22 @@
   var autorenameMapLines = document.getElementById("autorenameMapLines");
   var autorenameMapMarkers = document.getElementById("autorenameMapMarkers");
   var autorenameMatches = document.getElementById("autorenameMatches");
+  var sceneHeadingOffset = document.getElementById("sceneHeadingOffset");
+  var sceneHeadingOffsetLabel = document.getElementById("sceneHeadingOffsetLabel");
+  var sceneCameraYaw = document.getElementById("sceneCameraYaw");
+  var sceneViewHeading = document.getElementById("sceneViewHeading");
+  var sceneConeBearing = document.getElementById("sceneConeBearing");
+  var sceneConeBearingLabel = document.getElementById("sceneConeBearingLabel");
+  var sceneHeadingStatus = document.getElementById("sceneHeadingStatus");
+  var sceneHeadingMap = document.getElementById("sceneHeadingMap");
+  var sceneHeadingMapTiles = document.getElementById("sceneHeadingMapTiles");
+  var sceneHeadingMapDirection = document.getElementById("sceneHeadingMapDirection");
+  var sceneHeadingMapCone = document.getElementById("sceneHeadingMapCone");
+  var sceneHeadingZoomOut = document.getElementById("sceneHeadingZoomOut");
+  var sceneHeadingZoomIn = document.getElementById("sceneHeadingZoomIn");
+  var alignConeWithView = document.getElementById("alignConeWithView");
+  var resetConeAlignment = document.getElementById("resetConeAlignment");
+  var setInitialViewAndCone = document.getElementById("setInitialViewAndCone");
   var viewer;
   var project;
   var scenes = [];
@@ -38,6 +54,12 @@
   var autorenamePreviewPayload = null;
   var uploadWorkflowActive = false;
   var autorenameTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
+  var headingOverlayTileUrlTemplate = "https://tiles.arcgis.com/tiles/MRbkurfLm8nmQrDq/arcgis/rest/services/RasterLrv2026_1/MapServer/tile/{level}/{row}/{col}";
+  var headingMapZoom = 18;
+  var headingMapMinZoom = 16;
+  var headingMapMaxZoom = 19;
+  var headingMapKey = "";
+  var headingMapDrag = null;
   var uploadBatchMaxFiles = 5;
   var uploadBatchMaxBytes = 750 * 1024 * 1024;
 
@@ -92,6 +114,211 @@
     };
   }
 
+  function normalizeSignedDegrees(value) {
+    var number = Number(value);
+    if (!isFinite(number)) return 0;
+    number = ((number + 180) % 360 + 360) % 360 - 180;
+    return Math.abs(number) < 0.000001 ? 0 : number;
+  }
+
+  function normalizeHeadingDegrees(value) {
+    var number = Number(value);
+    if (!isFinite(number)) return 0;
+    number = ((number % 360) + 360) % 360;
+    return Math.abs(number) < 0.000001 ? 0 : number;
+  }
+
+  function formatSignedDegrees(value) {
+    var number = normalizeSignedDegrees(value);
+    return (number > 0 ? "+" : "") + number.toFixed(1) + " deg";
+  }
+
+  function formatHeadingDegrees(value) {
+    return normalizeHeadingDegrees(value).toFixed(1) + " deg";
+  }
+
+  function readNumericMetadata(metadata, keys) {
+    metadata = metadata || {};
+    for (var i = 0; i < keys.length; i++) {
+      var value = Number(metadata[keys[i]]);
+      if (isFinite(value)) return value;
+    }
+    return 0;
+  }
+
+  function rawCameraHeading(sceneData) {
+    var metadata = (sceneData && sceneData.metadata) || {};
+    return readNumericMetadata(metadata, [
+      "cameraYaw",
+      "cameraYawDegree",
+      "gimbalYawDegree",
+      "GimbalYawDegree",
+      "gimbalYaw",
+      "flightYaw",
+      "flightYawDegree",
+      "FlightYawDegree",
+      "droneYaw",
+      "heading"
+    ]);
+  }
+
+  function sceneHeadingCorrection(sceneData) {
+    return normalizeSignedDegrees(sceneData && sceneData.headingOffset);
+  }
+
+  function cameraHeadingOffset(sceneData) {
+    return rawCameraHeading(sceneData) + sceneHeadingCorrection(sceneData);
+  }
+
+  function correctedViewHeading(sceneData, params) {
+    params = params || {};
+    return normalizeHeadingDegrees(cameraHeadingOffset(sceneData) + ((Number(params.yaw) || 0) * 180 / Math.PI));
+  }
+
+  function currentViewParameters() {
+    if (viewer && viewer.view()) return viewer.view().parameters();
+    var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+    return scene ? scene.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 } : null;
+  }
+
+  function currentViewYawDegrees(params) {
+    params = params || currentViewParameters() || {};
+    return (Number(params.yaw) || 0) * 180 / Math.PI;
+  }
+
+  function readSceneCoordinates(scene) {
+    var coordinates = scene && scene.metadata ? scene.metadata.coordinates : null;
+    var latitude = coordinates ? Number(coordinates.latitude) : NaN;
+    var longitude = coordinates ? Number(coordinates.longitude) : NaN;
+    if (!isFinite(latitude) || !isFinite(longitude)) return null;
+    return { latitude: latitude, longitude: longitude };
+  }
+
+  function currentConeBearingForScene(scene, params) {
+    return correctedViewHeading(scene, params);
+  }
+
+  function setCurrentSceneConeBearing(bearing, options) {
+    var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+    if (!scene) return;
+    var params = currentViewParameters() || {};
+    var normalizedBearing = normalizeHeadingDegrees(bearing);
+    var correction = normalizedBearing - rawCameraHeading(scene) - currentViewYawDegrees(params);
+    scene.headingOffset = normalizeSignedDegrees(correction);
+    updateHeadingCalibration(params);
+    if (!options || !options.skipSave) {
+      markDirty(options && options.immediate ? { immediate: true } : undefined);
+    }
+  }
+
+  function headingMapTileUrl(template, level, col, row) {
+    return template
+      .replace("{level}", level)
+      .replace("{col}", col)
+      .replace("{row}", row);
+  }
+
+  function clampHeadingMapZoom(value) {
+    var zoom = Math.round(Number(value));
+    if (!isFinite(zoom)) zoom = 18;
+    return Math.max(headingMapMinZoom, Math.min(headingMapMaxZoom, zoom));
+  }
+
+  function setHeadingMapZoom(value) {
+    var nextZoom = clampHeadingMapZoom(value);
+    if (nextZoom === headingMapZoom) return;
+    headingMapZoom = nextZoom;
+    renderSceneHeadingMap(true);
+  }
+
+  function setHeadingMapStatus(message, active) {
+    if (!sceneHeadingStatus) return;
+    sceneHeadingStatus.textContent = message;
+    sceneHeadingStatus.classList.toggle("active", !!active);
+  }
+
+  function updateSceneHeadingMapDirection(params) {
+    var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+    if (!scene || !sceneHeadingMapDirection) return;
+    var bearing = currentConeBearingForScene(scene, params || currentViewParameters());
+    sceneHeadingMapDirection.style.transform = "rotate(" + bearing.toFixed(2) + "deg)";
+    if (sceneHeadingMapCone) {
+      sceneHeadingMapCone.style.width = "76px";
+      sceneHeadingMapCone.style.height = "66px";
+    }
+  }
+
+  function renderSceneHeadingMap(force) {
+    if (!sceneHeadingMap || !sceneHeadingMapTiles) return;
+    var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+    var coordinates = readSceneCoordinates(scene);
+    if (!scene || !coordinates) {
+      sceneHeadingMap.hidden = true;
+      headingMapKey = "";
+      if (sceneHeadingZoomOut) sceneHeadingZoomOut.disabled = true;
+      if (sceneHeadingZoomIn) sceneHeadingZoomIn.disabled = true;
+      setHeadingMapStatus("Sem coordenadas para calibrar pelo mapa.", false);
+      return;
+    }
+
+    sceneHeadingMap.hidden = false;
+    setHeadingMapStatus("Calibracao por mapa ativa. Zoom " + headingMapZoom + ".", true);
+    if (sceneHeadingZoomOut) sceneHeadingZoomOut.disabled = headingMapZoom <= headingMapMinZoom;
+    if (sceneHeadingZoomIn) sceneHeadingZoomIn.disabled = headingMapZoom >= headingMapMaxZoom;
+    var width = sceneHeadingMap.clientWidth || 320;
+    var height = sceneHeadingMap.clientHeight || 220;
+    var zoom = headingMapZoom;
+    var key = [
+      scene.id,
+      coordinates.latitude.toFixed(7),
+      coordinates.longitude.toFixed(7),
+      width,
+      height,
+      zoom
+    ].join("|");
+    if (force || headingMapKey !== key) {
+      headingMapKey = key;
+      sceneHeadingMapTiles.innerHTML = "";
+      var centerX = lonToWorldX(coordinates.longitude, zoom);
+      var centerY = latToWorldY(coordinates.latitude, zoom);
+      var left = centerX - width / 2;
+      var top = centerY - height / 2;
+      var minCol = Math.floor(left / 256);
+      var maxCol = Math.floor((left + width) / 256);
+      var minRow = Math.floor(top / 256);
+      var maxRow = Math.floor((top + height) / 256);
+      var tileCount = Math.pow(2, zoom);
+      for (var row = minRow; row <= maxRow; row++) {
+        if (row < 0 || row >= tileCount) continue;
+        for (var col = minCol; col <= maxCol; col++) {
+          var wrappedCol = ((col % tileCount) + tileCount) % tileCount;
+          [
+            { template: autorenameTileUrlTemplate, className: "base" },
+            { template: headingOverlayTileUrlTemplate, className: "overlay" }
+          ].forEach(function (tile) {
+            var image = document.createElement("img");
+            image.alt = "";
+            image.className = tile.className;
+            image.src = headingMapTileUrl(tile.template, zoom, wrappedCol, row);
+            image.style.left = Math.round(col * 256 - left) + "px";
+            image.style.top = Math.round(row * 256 - top) + "px";
+            sceneHeadingMapTiles.appendChild(image);
+          });
+        }
+      }
+    }
+    updateSceneHeadingMapDirection();
+  }
+
+  function bearingFromHeadingMapEvent(event) {
+    if (!sceneHeadingMap) return null;
+    var rect = sceneHeadingMap.getBoundingClientRect();
+    var dx = event.clientX - (rect.left + rect.width / 2);
+    var dy = event.clientY - (rect.top + rect.height / 2);
+    if (Math.abs(dx) + Math.abs(dy) < 3) return null;
+    return normalizeHeadingDegrees(Math.atan2(dx, -dy) * 180 / Math.PI);
+  }
+
   function normalizeProject(payload) {
     payload = payload || {};
     payload.settings = normalizeSettings(payload.settings);
@@ -99,6 +326,7 @@
     payload.scenes.forEach(function (scene) {
       scene.infoHotspots = Array.isArray(scene.infoHotspots) ? scene.infoHotspots : [];
       scene.linkHotspots = Array.isArray(scene.linkHotspots) ? scene.linkHotspots : [];
+      scene.headingOffset = normalizeSignedDegrees(scene.headingOffset);
     });
     return payload;
   }
@@ -416,6 +644,63 @@
     document.getElementById("settingSaveOriginalPhotos").checked = project.settings.saveOriginalPhotos !== false;
     document.getElementById("settingMouseMode").value = project.settings.mouseViewMode || "drag";
     document.getElementById("controls").hidden = project.settings.controls === false;
+    updateHeadingCalibration();
+    renderSceneHeadingMap(true);
+  }
+
+  function updateHeadingCalibration(params) {
+    var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+    var hasScene = !!scene;
+    if (sceneHeadingOffset) {
+      sceneHeadingOffset.disabled = !hasScene;
+      sceneHeadingOffset.value = hasScene ? sceneHeadingCorrection(scene).toFixed(6) : "0";
+    }
+    if (sceneConeBearing) {
+      sceneConeBearing.disabled = !hasScene;
+    }
+    [alignConeWithView, resetConeAlignment, setInitialViewAndCone].forEach(function (button) {
+      if (button) button.disabled = !hasScene;
+    });
+    if (!hasScene) {
+      if (sceneCameraYaw) sceneCameraYaw.textContent = "-";
+      if (sceneConeBearingLabel) sceneConeBearingLabel.textContent = "-";
+      if (sceneHeadingOffsetLabel) sceneHeadingOffsetLabel.textContent = "0 deg";
+      if (sceneViewHeading) sceneViewHeading.textContent = "Sem cena";
+      if (sceneConeBearing && document.activeElement !== sceneConeBearing) sceneConeBearing.value = "0.0";
+      renderSceneHeadingMap();
+      return;
+    }
+    params = params || currentViewParameters();
+    var coneBearing = params ? currentConeBearingForScene(scene, params) : 0;
+    if (sceneCameraYaw) sceneCameraYaw.textContent = formatHeadingDegrees(rawCameraHeading(scene));
+    if (sceneConeBearingLabel) sceneConeBearingLabel.textContent = formatHeadingDegrees(coneBearing);
+    if (sceneHeadingOffsetLabel) sceneHeadingOffsetLabel.textContent = formatSignedDegrees(sceneHeadingCorrection(scene));
+    if (sceneConeBearing && document.activeElement !== sceneConeBearing) {
+      sceneConeBearing.value = coneBearing.toFixed(1);
+    }
+    if (sceneViewHeading) {
+      sceneViewHeading.textContent = params ? "Cone " + formatHeadingDegrees(coneBearing) : "Cone -";
+    }
+    updateSceneHeadingMapDirection(params);
+  }
+
+  function setCurrentSceneHeadingOffset(value, options) {
+    var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+    if (!scene) return;
+    scene.headingOffset = normalizeSignedDegrees(value);
+    updateHeadingCalibration();
+    if (!options || !options.skipSave) {
+      markDirty(options && options.immediate ? { immediate: true } : undefined);
+    }
+  }
+
+  function saveCurrentViewAndCone() {
+    var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+    if (!scene || !viewer || !viewer.view()) return;
+    var params = viewer.view().parameters();
+    scene.initialViewParameters = { yaw: params.yaw, pitch: params.pitch, fov: params.fov };
+    updateHeadingCalibration(params);
+    markDirty({ immediate: true });
   }
 
   function makeHotspotElement(hotspot, type) {
@@ -563,6 +848,100 @@
     project.scenes[currentIndex].initialViewParameters = { yaw: params.yaw, pitch: params.pitch, fov: params.fov };
     markDirty();
   });
+
+  if (sceneConeBearing) {
+    sceneConeBearing.addEventListener("input", function (event) {
+      var value = Number(event.target.value);
+      if (!isFinite(value)) return;
+      setCurrentSceneConeBearing(value);
+    });
+    sceneConeBearing.addEventListener("change", function (event) {
+      var value = Number(event.target.value);
+      setCurrentSceneConeBearing(isFinite(value) ? value : 0, { immediate: true });
+      var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+      event.target.value = scene ? currentConeBearingForScene(scene, currentViewParameters()).toFixed(1) : "0.0";
+    });
+  }
+
+  if (alignConeWithView) {
+    alignConeWithView.addEventListener("click", function () {
+      saveCurrentViewAndCone();
+    });
+  }
+
+  if (resetConeAlignment) {
+    resetConeAlignment.addEventListener("click", function () {
+      setCurrentSceneHeadingOffset(0, { immediate: true });
+    });
+  }
+
+  if (setInitialViewAndCone) {
+    setInitialViewAndCone.addEventListener("click", function () {
+      saveCurrentViewAndCone();
+    });
+  }
+
+  if (sceneHeadingMap) {
+    sceneHeadingMap.addEventListener("pointerdown", function (event) {
+      if (event.target.closest(".heading-map-controls")) return;
+      var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+      if (!scene || !readSceneCoordinates(scene)) return;
+      var bearing = bearingFromHeadingMapEvent(event);
+      if (bearing == null) return;
+      event.preventDefault();
+      headingMapDrag = event.pointerId;
+      sceneHeadingMap.setPointerCapture(event.pointerId);
+      setCurrentSceneConeBearing(bearing, { skipSave: true });
+    });
+    sceneHeadingMap.addEventListener("pointermove", function (event) {
+      if (headingMapDrag !== event.pointerId) return;
+      var bearing = bearingFromHeadingMapEvent(event);
+      if (bearing == null) return;
+      event.preventDefault();
+      setCurrentSceneConeBearing(bearing, { skipSave: true });
+    });
+    sceneHeadingMap.addEventListener("pointerup", function (event) {
+      if (headingMapDrag !== event.pointerId) return;
+      headingMapDrag = null;
+      try {
+        sceneHeadingMap.releasePointerCapture(event.pointerId);
+      } catch (error) {}
+      var bearing = bearingFromHeadingMapEvent(event);
+      if (bearing != null) {
+        setCurrentSceneConeBearing(bearing, { immediate: true });
+      } else {
+        markDirty({ immediate: true });
+      }
+    });
+    sceneHeadingMap.addEventListener("pointercancel", function (event) {
+      if (headingMapDrag !== event.pointerId) return;
+      headingMapDrag = null;
+      try {
+        sceneHeadingMap.releasePointerCapture(event.pointerId);
+      } catch (error) {}
+      markDirty({ immediate: true });
+    });
+    sceneHeadingMap.addEventListener("wheel", function (event) {
+      var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+      if (!scene || !readSceneCoordinates(scene)) return;
+      event.preventDefault();
+      setHeadingMapZoom(headingMapZoom + (event.deltaY < 0 ? 1 : -1));
+    }, { passive: false });
+  }
+
+  if (sceneHeadingZoomOut) {
+    sceneHeadingZoomOut.addEventListener("click", function (event) {
+      event.stopPropagation();
+      setHeadingMapZoom(headingMapZoom - 1);
+    });
+  }
+
+  if (sceneHeadingZoomIn) {
+    sceneHeadingZoomIn.addEventListener("click", function (event) {
+      event.stopPropagation();
+      setHeadingMapZoom(headingMapZoom + 1);
+    });
+  }
 
   document.getElementById("addInfo").addEventListener("click", function () {
     var params = viewer.view().parameters();
@@ -851,7 +1230,10 @@
     var activeView = viewer ? viewer.view() : null;
     if (activeView) {
       var p = activeView.parameters();
-      viewReadout.textContent = "yaw " + p.yaw.toFixed(3) + " | pitch " + p.pitch.toFixed(3) + " | fov " + p.fov.toFixed(3);
+      var scene = project && project.scenes ? project.scenes[currentIndex] : null;
+      var headingText = scene ? " | cone " + formatHeadingDegrees(correctedViewHeading(scene, p)) : "";
+      viewReadout.textContent = "yaw " + p.yaw.toFixed(3) + " | pitch " + p.pitch.toFixed(3) + " | fov " + p.fov.toFixed(3) + headingText;
+      updateHeadingCalibration(p);
     }
     requestAnimationFrame(updateReadout);
   }
@@ -908,6 +1290,10 @@
     if (hasPendingSave) {
       saveProject({ keepalive: true }).catch(function () {});
     }
+  });
+
+  window.addEventListener("resize", function () {
+    renderSceneHeadingMap(true);
   });
 
   loadProject();

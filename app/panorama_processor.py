@@ -295,6 +295,7 @@ def process_panorama(
         "levels": levels,
         "faceSize": face_size,
         "initialViewParameters": {"yaw": 0, "pitch": 0, "fov": 1.5707963267948966},
+        "headingOffset": 0,
         "linkHotspots": [],
         "infoHotspots": [],
         "originalSize": {"width": width, "height": height},

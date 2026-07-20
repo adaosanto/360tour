@@ -5,134 +5,213 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Editor de tour</title>
-  <link rel="stylesheet" href="/static/editor.css">
+  <link rel="stylesheet" href="/static/editor.css?v=project-editor-17">
 </head>
 
-<body>
+<body class="editor-page">
   <div class="app-shell" data-project-id="{{ project_id }}">
     <aside class="sidebar">
-      <header>
-        <h1>Tour</h1>
+      <header class="sidebar-header">
+        <div>
+          <span class="sidebar-kicker">Editor 360</span>
+          <h1>Tour</h1>
+        </div>
         <span id="saveState">Carregando</span>
       </header>
 
-      <section>
-        <h2>Cenas</h2>
-        <div id="sceneList" class="scene-list"></div>
-        <label class="small-upload">
-          Adicionar panoramas
-          <input id="addFiles" type="file" accept=".jpg,.jpeg,.png,.tif,.tiff,image/jpeg,image/png,image/tiff" multiple>
-        </label>
-      </section>
+      <div class="sidebar-content">
+        <section class="editor-section scenes-section">
+          <div class="section-title">
+            <h2>Cenas</h2>
+          </div>
+          <div id="sceneList" class="scene-list"></div>
+          <label class="small-upload">
+            <span>Adicionar panoramas</span>
+            <input id="addFiles" type="file" accept=".jpg,.jpeg,.png,.tif,.tiff,image/jpeg,image/png,image/tiff" multiple>
+          </label>
+        </section>
 
-      <section class="autorename-panel">
-        <h2>Autorename ArcGIS</h2>
-        <div class="autorename-grid">
-          <label>Distancia max. (m)
-            <input id="autorenameDistance" type="number" min="1" step="1" value="15">
+        <section class="editor-section autorename-panel">
+          <div class="section-title">
+            <h2>Autorename ArcGIS</h2>
+          </div>
+          <div class="autorename-grid">
+            <label>Distancia max. (m)
+              <input id="autorenameDistance" type="number" min="1" step="1" value="15">
+            </label>
+            <label class="autorename-wide">URL do view no CSV
+              <input id="autorenameCsvViewUrl" type="url"
+                value="https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/">
+            </label>
+            <label>Ciclo
+              <select id="autorenameCsvCiclo">
+                <option value="">Selecione</option>
+                <option value="1">Primeiro Trimestre - 1</option>
+                <option value="2">Segundo Trimestre - 2</option>
+                <option value="3">Terceiro Trimestre - 3</option>
+                <option value="4">Quatro Trimestre - 4</option>
+                <option value="5">Quinto Ciclo - 5</option>
+                <option value="6">Tours - 6</option>
+              </select>
+            </label>
+            <label>Profissional
+              <select id="autorenameCsvProfissional">
+                <option value="">Selecione</option>
+                <option value="3">Adão C Nascimento dos Santos - 3</option>
+                <option value="4">Samira Soares da Silva - 4</option>
+              </select>
+            </label>
+            <label>Finalidade
+              <select id="autorenameCsvFinalidade">
+                <option value="">Selecione</option>
+                <option value="1">Fiscalização - 1</option>
+                <option value="2">Acompanhamento de Obras - 2</option>
+                <option value="3">Atualização do Trimestre de Geotecnologia - 3</option>
+                <option value="4">Outros - 4</option>
+              </select>
+            </label>
+            <label>Departamento solicitante
+              <select id="autorenameCsvDepartamento">
+                <option value="">Selecione</option>
+                <option value="1">Geotecnologia - 1</option>
+              </select>
+            </label>
+            <label>Situacao
+              <select id="autorenameCsvSituacao">
+                <option value="">Selecione</option>
+                <option value="1">Solicitado - 1</option>
+                <option value="2">Imagiado - 2</option>
+                <option value="3">Realizado - 3</option>
+              </select>
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="previewAutorename" type="button">Preview</button>
+            <button id="applyAutorename" type="button" disabled>Aplicar</button>
+            <button id="exportAutorenameCsv" type="button" disabled>CSV</button>
+          </div>
+          <p id="autorenameStatus" class="autorename-status">Clique em Preview para buscar os pontos ArcGIS no servidor.
+          </p>
+          <div id="autorenameMap" class="autorename-map" hidden>
+            <div id="autorenameMapTiles" class="autorename-map-tiles"></div>
+            <svg id="autorenameMapLines" class="autorename-map-lines" aria-hidden="true"></svg>
+            <div id="autorenameMapMarkers" class="autorename-map-markers"></div>
+          </div>
+          <div id="autorenameMatches" class="autorename-matches"></div>
+        </section>
+
+        <section class="editor-section">
+          <div class="section-title">
+            <h2>Cena atual</h2>
+          </div>
+          <label>Nome <input id="sceneName" type="text"></label>
+          <div class="button-row">
+            <button id="moveUp" type="button">Subir</button>
+            <button id="moveDown" type="button">Descer</button>
+            <button id="deleteScene" type="button" class="danger subtle-danger">Excluir</button>
+          </div>
+          <button id="setInitialView" type="button" class="secondary">Usar vista atual como inicial</button>
+          <div class="heading-calibration">
+            <div class="heading-calibration-head">
+              <strong>Alinhamento do cone</strong>
+              <span id="sceneViewHeading">Sem cena</span>
+            </div>
+            <div class="heading-readout">
+              <span>Yaw EXIF <strong id="sceneCameraYaw">-</strong></span>
+              <span>Cone mapa <strong id="sceneConeBearingLabel">-</strong></span>
+              <span>Correção <strong id="sceneHeadingOffsetLabel">0 deg</strong></span>
+            </div>
+            <div id="sceneHeadingMap" class="heading-map" hidden>
+              <div id="sceneHeadingMapTiles" class="heading-map-tiles"></div>
+              <div id="sceneHeadingMapMarker" class="heading-map-marker">
+                <span id="sceneHeadingMapDirection" class="heading-map-direction">
+                  <span id="sceneHeadingMapCone" class="heading-map-cone"></span>
+                  <span class="heading-map-handle"></span>
+                </span>
+              </div>
+              <span class="heading-map-north">N</span>
+              <div class="heading-map-controls" aria-label="Zoom do mapa de alinhamento">
+                <button id="sceneHeadingZoomOut" type="button" aria-label="Diminuir zoom do mapa">-</button>
+                <button id="sceneHeadingZoomIn" type="button" aria-label="Aumentar zoom do mapa">+</button>
+              </div>
+            </div>
+            <p id="sceneHeadingStatus" class="heading-status">Sem coordenadas para calibrar pelo mapa.</p>
+            <label>Direcao do cone no mapa (graus)
+              <input id="sceneConeBearing" type="number" min="0" max="359.9" step="0.1" value="0">
+            </label>
+            <input id="sceneHeadingOffset" type="hidden" value="0">
+            <div class="button-row">
+              <button id="resetConeAlignment" type="button" class="secondary">Zerar</button>
+              <button id="setInitialViewAndCone" type="button" class="secondary">Salvar vista + cone</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="editor-section">
+          <div class="section-title">
+            <h2>Hotspots</h2>
+          </div>
+          <div class="button-row">
+            <button id="addInfo" type="button">Info</button>
+            <button id="addLink" type="button">Link</button>
+          </div>
+          <div id="hotspotList" class="hotspot-list"></div>
+        </section>
+
+        <section class="editor-section settings-section">
+          <div class="section-title">
+            <h2>Configuracoes</h2>
+          </div>
+          <label class="switch-field">
+            <span>Autorrotacao</span>
+            <input id="settingAutorotate" type="checkbox">
+            <span class="switch-ui" aria-hidden="true"></span>
           </label>
-          <label class="autorename-wide">URL do view no CSV
-            <input id="autorenameCsvViewUrl" type="url"
-              value="https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/">
+          <label class="switch-field">
+            <span>Botoes de controle</span>
+            <input id="settingControls" type="checkbox">
+            <span class="switch-ui" aria-hidden="true"></span>
           </label>
-          <label>Ciclo
-            <select id="autorenameCsvCiclo">
-              <option value="">Selecione</option>
-              <option value="1">Primeiro Trimestre - 1</option>
-              <option value="2">Segundo Trimestre - 2</option>
-              <option value="3">Terceiro Trimestre - 3</option>
-              <option value="4">Quatro Trimestre - 4</option>
-              <option value="5">Quinto Ciclo - 5</option>
-              <option value="6">Tours - 6</option>
+          <label class="switch-field">
+            <span>Tela cheia</span>
+            <input id="settingFullscreen" type="checkbox">
+            <span class="switch-ui" aria-hidden="true"></span>
+          </label>
+          <label class="switch-field">
+            <span>Lista de panoramas</span>
+            <input id="settingSceneList" type="checkbox">
+            <span class="switch-ui" aria-hidden="true"></span>
+          </label>
+          <label class="switch-field">
+            <span>Exibir campo Foto nos metadados</span>
+            <input id="settingShowPhotoNames" type="checkbox">
+            <span class="switch-ui" aria-hidden="true"></span>
+          </label>
+          <label class="switch-field">
+            <span>Exibir cone de visao no mapa</span>
+            <input id="settingShowMapViewCone" type="checkbox">
+            <span class="switch-ui" aria-hidden="true"></span>
+          </label>
+          <label class="switch-field">
+            <span>Salvar fotos 360 originais</span>
+            <input id="settingSaveOriginalPhotos" type="checkbox">
+            <span class="switch-ui" aria-hidden="true"></span>
+          </label>
+          <label>Navegacao
+            <select id="settingMouseMode">
+              <option value="drag">Drag</option>
+              <option value="qtvr">QTVR</option>
             </select>
           </label>
-          <label>Profissional
-            <select id="autorenameCsvProfissional">
-              <option value="">Selecione</option>
-              <option value="3">Adão C Nascimento dos Santos - 3</option>
-              <option value="4">Samira Soares da Silva - 4</option>
-            </select>
-          </label>
-          <label>Finalidade
-            <select id="autorenameCsvFinalidade">
-              <option value="">Selecione</option>
-              <option value="1">Fiscalização - 1</option>
-              <option value="2">Acompanhamento de Obras - 2</option>
-              <option value="3">Atualização do Trimestre de Geotecnologia - 3</option>
-              <option value="4">Outros - 4</option>
-            </select>
-          </label>
-          <label>Departamento solicitante
-            <select id="autorenameCsvDepartamento">
-              <option value="">Selecione</option>
-              <option value="1">Geotecnologia - 1</option>
-            </select>
-          </label>
-          <label>Situacao
-            <select id="autorenameCsvSituacao">
-              <option value="">Selecione</option>
-              <option value="1">Solicitado - 1</option>
-              <option value="2">Imagiado - 2</option>
-              <option value="3">Realizado - 3</option>
-            </select>
-          </label>
-        </div>
-        <div class="button-row">
-          <button id="previewAutorename" type="button">Preview</button>
-          <button id="applyAutorename" type="button" disabled>Aplicar</button>
-          <button id="exportAutorenameCsv" type="button" disabled>CSV</button>
-        </div>
-        <p id="autorenameStatus" class="autorename-status">Clique em Preview para buscar os pontos ArcGIS no servidor.
-        </p>
-        <div id="autorenameMap" class="autorename-map" hidden>
-          <div id="autorenameMapTiles" class="autorename-map-tiles"></div>
-          <svg id="autorenameMapLines" class="autorename-map-lines" aria-hidden="true"></svg>
-          <div id="autorenameMapMarkers" class="autorename-map-markers"></div>
-        </div>
-        <div id="autorenameMatches" class="autorename-matches"></div>
-      </section>
+        </section>
+      </div>
 
-      <section>
-        <h2>Cena atual</h2>
-        <label>Nome <input id="sceneName" type="text"></label>
-        <div class="button-row">
-          <button id="moveUp" type="button">Subir</button>
-          <button id="moveDown" type="button">Descer</button>
-          <button id="deleteScene" type="button" class="danger">Excluir</button>
+      <footer class="sidebar-footer">
+        <div class="primary-actions">
+          <a class="button-link primary-action" href="/view/{{ project_id }}" target="_blank" rel="noopener">Visualizar tour</a>
+          <button id="exportZip" type="button" class="primary-action">Exportar ZIP</button>
         </div>
-        <button id="setInitialView" type="button">Usar vista atual como inicial</button>
-      </section>
-
-      <section>
-        <h2>Hotspots</h2>
-        <div class="button-row">
-          <button id="addInfo" type="button">Info</button>
-          <button id="addLink" type="button">Link</button>
-        </div>
-        <div id="hotspotList" class="hotspot-list"></div>
-      </section>
-
-      <section>
-        <h2>Configuracoes</h2>
-        <label><input id="settingAutorotate" type="checkbox"> Autorrotacao</label>
-        <label><input id="settingControls" type="checkbox"> Botoes de controle</label>
-        <label><input id="settingFullscreen" type="checkbox"> Tela cheia</label>
-        <label><input id="settingSceneList" type="checkbox"> Lista de panoramas</label>
-        <label><input id="settingShowPhotoNames" type="checkbox"> Exibir campo Foto nos metadados</label>
-        <label><input id="settingShowMapViewCone" type="checkbox"> Exibir cone de visao no mapa</label>
-        <label><input id="settingSaveOriginalPhotos" type="checkbox"> Salvar fotos 360 originais</label>
-        <label>Navegacao
-          <select id="settingMouseMode">
-            <option value="drag">Drag</option>
-            <option value="qtvr">QTVR</option>
-          </select>
-        </label>
-      </section>
-
-      <footer>
-        <a class="button-link" href="/view/{{ project_id }}" target="_blank" rel="noopener">Visualizar tour</a>
-        <button id="exportZip" type="button">Exportar ZIP</button>
-        <button id="deleteProject" type="button" class="secondary">Excluir temporario</button>
+        <button id="deleteProject" type="button" class="secondary subtle-danger">Excluir temporario</button>
       </footer>
     </aside>
 
@@ -155,7 +234,7 @@
   </div>
 
   <script src="/static/marzipano.js"></script>
-  <script src="/static/editor.js?v=project-editor-13"></script>
+  <script src="/static/editor.js?v=project-editor-17"></script>
 </body>
 
 </html>
