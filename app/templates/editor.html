@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Editor de tour</title>
-  <link rel="stylesheet" href="/static/editor.css?v=project-editor-17">
+  <link rel="stylesheet" href="/static/editor.css?v=project-editor-18">
 </head>
 
 <body class="editor-page">
@@ -209,7 +209,7 @@
       <footer class="sidebar-footer">
         <div class="primary-actions">
           <a class="button-link primary-action" href="/view/{{ project_id }}" target="_blank" rel="noopener">Visualizar tour</a>
-          <button id="exportZip" type="button" class="primary-action">Exportar ZIP</button>
+          <button id="exportZip" type="button" class="primary-action" disabled aria-disabled="true" title="Exportacao ZIP desativada">Exportar ZIP</button>
         </div>
         <button id="deleteProject" type="button" class="secondary subtle-danger">Excluir temporario</button>
       </footer>
@@ -234,7 +234,7 @@
   </div>
 
   <script src="/static/marzipano.js"></script>
-  <script src="/static/editor.js?v=project-editor-17"></script>
+  <script src="/static/editor.js?v=project-editor-18"></script>
 </body>
 
 </html>

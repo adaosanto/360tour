@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Visualizar tour</title>
-  <link rel="stylesheet" href="/static/viewer.css?v=project-view-26">
+  <link rel="stylesheet" href="/static/viewer.css?v=project-view-27">
 </head>
 <body class="tour-view" data-project-id="{{ project_id }}" data-initial-scene-id="{{ initial_scene_id }}" data-show-btn-list="{{ show_btn_list }}">
   <div id="pano"></div>
@@ -62,6 +62,7 @@
         <button type="button" id="mapZoomIn" aria-label="Aproximar mapa">+</button>
         <button type="button" id="mapZoomOut" aria-label="Afastar mapa">-</button>
         <button type="button" id="mapRecenter" aria-label="Centralizar mapa">•</button>
+        <button type="button" id="mapExpandToggle" aria-label="Ampliar mapa" aria-pressed="false">⛶</button>
       </div>
     </div>
     <dl class="metadata-list">
@@ -180,6 +181,6 @@
   <script>
     window.__PROJECT_DATA__ = {{ project_json | safe }};
   </script>
-  <script src="/static/viewer.js?v=project-view-28"></script>
+  <script src="/static/viewer.js?v=project-view-30"></script>
 </body>
 </html>

@@ -145,7 +145,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Visualizar tour</title>
-  <link rel="stylesheet" href="<?= h($staticUrl) ?>/viewer.css?v=project-view-23">
+  <link rel="stylesheet" href="<?= h($staticUrl) ?>/viewer.css?v=project-view-27">
 </head>
 <body class="tour-view" data-project-id="<?= h($projectId) ?>" data-initial-scene-id="<?= h($initialSceneId) ?>" data-show-btn-list="<?= h($showBtnList) ?>" data-project-file-base="<?= h($assetBase) ?>">
   <div id="pano"></div>
@@ -203,6 +203,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
         <button type="button" id="mapZoomIn" aria-label="Aproximar mapa">+</button>
         <button type="button" id="mapZoomOut" aria-label="Afastar mapa">-</button>
         <button type="button" id="mapRecenter" aria-label="Centralizar mapa">•</button>
+        <button type="button" id="mapExpandToggle" aria-label="Ampliar mapa" aria-pressed="false">⛶</button>
       </div>
     </div>
     <dl class="metadata-list">
@@ -321,6 +322,6 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <script>
     window.__PROJECT_DATA__ = <?= $projectJson ?>;
   </script>
-  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-28"></script>
+  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-30"></script>
 </body>
 </html>

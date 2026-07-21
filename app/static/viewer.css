@@ -494,6 +494,11 @@ button {
   display: block;
 }
 
+.metadata-panel.enabled.map-expanded {
+  width: min(820px, calc(100vw - 32px));
+  max-height: calc(100vh - 98px);
+}
+
 .metadata-panel-header {
   display: flex;
   align-items: center;
@@ -523,6 +528,15 @@ button {
   background: #111820;
   cursor: grab;
   touch-action: none;
+}
+
+.metadata-panel.map-expanded .photo-map {
+  height: min(640px, calc(100vh - 150px));
+  min-height: 360px;
+}
+
+.metadata-panel.map-expanded .metadata-list {
+  display: none;
 }
 
 .photo-map.dragging {
@@ -562,6 +576,11 @@ button {
   background: rgba(25, 33, 43, 0.88);
   color: #fff;
   font-weight: 700;
+}
+
+.photo-map-controls button.enabled {
+  background: rgba(199, 243, 223, 0.92);
+  color: #15231d;
 }
 
 .map-marker {

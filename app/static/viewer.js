@@ -31,6 +31,7 @@
   var mapZoomIn = document.getElementById("mapZoomIn");
   var mapZoomOut = document.getElementById("mapZoomOut");
   var mapRecenter = document.getElementById("mapRecenter");
+  var mapExpandToggle = document.getElementById("mapExpandToggle");
   var printGeoButton = document.getElementById("printGeoButton");
   var printLayout = document.getElementById("printLayout");
   var sketchToggle = document.getElementById("sketchToggle");
@@ -65,6 +66,7 @@
   var editDrag = null;
   var baseTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
   var overlayTileUrlTemplate = "https://tiles.arcgis.com/tiles/MRbkurfLm8nmQrDq/arcgis/rest/services/RasterLrv2026_1/MapServer/tile/{level}/{row}/{col}";
+  var labelTileUrlTemplate = "https://mt1.google.com/vt/lyrs=h&hl=pt-BR&z={level}&x={col}&y={row}";
   var initialized = false;
   var pollTimer = null;
   var embeddedProject = window.__PROJECT_DATA__ || null;
@@ -1166,6 +1168,7 @@
         var wrappedCol = ((col % size) + size) % size;
         addPrintMapTile(printMapTiles, tileUrl(baseTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-base");
         addPrintMapTile(printMapTiles, tileUrl(overlayTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-overlay");
+        addPrintMapTile(printMapTiles, tileUrl(labelTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-labels");
       }
     }
 
@@ -1538,6 +1541,7 @@
         var wrappedCol = ((col % size) + size) % size;
         addMapTile(tileUrl(baseTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-base");
         addMapTile(tileUrl(overlayTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-overlay");
+        addMapTile(tileUrl(labelTileUrlTemplate, zoom, wrappedCol, row), col, row, left, top, "map-tile-labels");
       }
     }
     updateMapMarkers();
@@ -1628,6 +1632,16 @@
     renderMap();
   }
 
+  function setMapExpanded(expanded) {
+    if (!metadataPanel || !mapExpandToggle) return;
+    metadataPanel.classList.toggle("map-expanded", !!expanded);
+    mapExpandToggle.classList.toggle("enabled", !!expanded);
+    mapExpandToggle.setAttribute("aria-pressed", expanded ? "true" : "false");
+    mapExpandToggle.setAttribute("aria-label", expanded ? "Reduzir mapa" : "Ampliar mapa");
+    mapExpandToggle.title = expanded ? "Reduzir mapa" : "Ampliar mapa";
+    requestAnimationFrame(renderMap);
+  }
+
   function setupMap(initialScene, shouldFocusInitialScene) {
     mapPoints = scenes.map(getScenePoint).filter(Boolean);
     if (!mapPoints.length) {
@@ -1664,10 +1678,14 @@
     metadataPanel.classList.toggle("enabled");
     metadataToggle.classList.toggle("enabled");
     metadataToggle.setAttribute("aria-expanded", metadataPanel.classList.contains("enabled") ? "true" : "false");
+    if (!metadataPanel.classList.contains("enabled")) {
+      setMapExpanded(false);
+    }
     renderMap();
   });
 
   metadataClose.addEventListener("click", function () {
+    setMapExpanded(false);
     metadataPanel.classList.remove("enabled");
     metadataToggle.classList.remove("enabled");
     metadataToggle.setAttribute("aria-expanded", "false");
@@ -1685,6 +1703,12 @@
     fitMapToPoints();
     renderMap();
   });
+
+  if (mapExpandToggle) {
+    mapExpandToggle.addEventListener("click", function () {
+      setMapExpanded(!metadataPanel.classList.contains("map-expanded"));
+    });
+  }
 
   if (printGeoButton) {
     printGeoButton.addEventListener("click", function () {
