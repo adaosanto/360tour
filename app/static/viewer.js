@@ -229,18 +229,27 @@
       .replace(/^-+|-+$/g, "");
   }
 
+  function sceneMatchesIdentifier(scene, value) {
+    if (!scene || !value) return false;
+    var data = scene.data || {};
+    var normalized = normalizeIdentifier(value);
+    return data.id === value ||
+      data.sourceFile === value ||
+      data.name === value ||
+      normalizeIdentifier(data.id) === normalized ||
+      normalizeIdentifier(data.sourceFile) === normalized ||
+      normalizeIdentifier(data.name) === normalized;
+  }
+
   function findInitialScene() {
     if (!initialSceneId) return scenes[0];
-    var normalized = normalizeIdentifier(initialSceneId);
     return scenes.find(function (scene) {
-      var data = scene.data || {};
-      return data.id === initialSceneId ||
-        data.sourceFile === initialSceneId ||
-        data.name === initialSceneId ||
-        normalizeIdentifier(data.id) === normalized ||
-        normalizeIdentifier(data.sourceFile) === normalized ||
-        normalizeIdentifier(data.name) === normalized;
+      return sceneMatchesIdentifier(scene, initialSceneId);
     }) || scenes[0];
+  }
+
+  function hasExplicitInitialScene(scene) {
+    return !!initialSceneId && sceneMatchesIdentifier(scene, initialSceneId);
   }
 
   function switchScene(scene) {
@@ -438,12 +447,14 @@
 
   function chooseMapZoom(points, width, height) {
     if (points.length <= 1) return 17;
+    var usableWidth = Math.max(80, width - 70);
+    var usableHeight = Math.max(80, height - 70);
     for (var zoom = 18; zoom >= 2; zoom--) {
       var xs = points.map(function (point) { return lonToWorldX(point.lon, zoom); });
       var ys = points.map(function (point) { return latToWorldY(point.lat, zoom); });
       var spanX = Math.max.apply(null, xs) - Math.min.apply(null, xs);
       var spanY = Math.max.apply(null, ys) - Math.min.apply(null, ys);
-      if (spanX <= width - 70 && spanY <= height - 70) return zoom;
+      if (spanX <= usableWidth && spanY <= usableHeight) return zoom;
     }
     return 2;
   }
@@ -452,11 +463,34 @@
     if (!mapPoints.length) return;
     var width = photoMap.clientWidth || 320;
     var height = photoMap.clientHeight || 220;
-    var centerX = mapPoints.reduce(function (sum, point) { return sum + lonToWorldX(point.lon, 18); }, 0) / mapPoints.length;
-    var centerY = mapPoints.reduce(function (sum, point) { return sum + latToWorldY(point.lat, 18); }, 0) / mapPoints.length;
     mapState.zoom = chooseMapZoom(mapPoints, width, height);
-    mapState.lon = worldXToLon(centerX / Math.pow(2, 18 - mapState.zoom), mapState.zoom);
-    mapState.lat = worldYToLat(centerY / Math.pow(2, 18 - mapState.zoom), mapState.zoom);
+    var xs = mapPoints.map(function (point) { return lonToWorldX(point.lon, mapState.zoom); });
+    var ys = mapPoints.map(function (point) { return latToWorldY(point.lat, mapState.zoom); });
+    var centerX = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
+    var centerY = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+    mapState.lon = worldXToLon(centerX, mapState.zoom);
+    mapState.lat = worldYToLat(centerY, mapState.zoom);
+  }
+
+  function mapPointForScene(scene) {
+    if (!scene) return null;
+    return mapPoints.find(function (point) {
+      return point.scene === scene || point.scene.data.id === scene.data.id;
+    }) || null;
+  }
+
+  function focusMapOnScene(scene) {
+    var point = mapPointForScene(scene);
+    if (!point) {
+      fitMapToPoints();
+      return;
+    }
+    mapState.lat = point.lat;
+    mapState.lon = point.lon;
+    mapState.zoom = Math.max(17, Math.min(19, mapState.zoom || 18));
+    if (mapPoints.length > 1 && mapState.zoom < 18) {
+      mapState.zoom = 16;
+    }
   }
 
   function tileUrl(template, level, col, row) {
@@ -489,7 +523,7 @@
   function saveSketchAnnotations() {
     try {
       localStorage.setItem(sketchStorageKey(), JSON.stringify(sketchAnnotations));
-    } catch (error) {}
+    } catch (error) { }
     updateSketchState();
   }
 
@@ -518,7 +552,7 @@
     if (changed) {
       try {
         localStorage.setItem(sketchStorageKey(), JSON.stringify(sketchAnnotations));
-      } catch (error) {}
+      } catch (error) { }
     }
   }
 
@@ -1295,7 +1329,7 @@
     layer.addEventListener("renderComplete", onRenderComplete);
     try {
       stage.render();
-    } catch (error) {}
+    } catch (error) { }
   }
 
   function waitForPrintAssets(callback) {
@@ -1327,14 +1361,14 @@
         var stageSnapshot = printViewer.stage().takeSnapshot({ quality: 92 });
         if (stageSnapshot && stageSnapshot.length > 1000) return stageSnapshot;
       }
-    } catch (error) {}
+    } catch (error) { }
     var container = document.getElementById("printPanoLive");
     var canvas = container ? container.querySelector("canvas") : null;
     if (!canvas || !canvas.width || !canvas.height) return "";
     try {
       var directSnapshot = canvas.toDataURL("image/png");
       if (directSnapshot && directSnapshot.length > 1000) return directSnapshot;
-    } catch (error) {}
+    } catch (error) { }
     try {
       var buffer = document.createElement("canvas");
       buffer.width = canvas.width;
@@ -1423,7 +1457,7 @@
       clearPrintPreparation();
       try {
         if (popup && !popup.closed) popup.close();
-      } catch (error) {}
+      } catch (error) { }
     }
     popup.addEventListener("afterprint", cleanup);
     popup.addEventListener("beforeunload", cleanup);
@@ -1462,7 +1496,7 @@
           window.alert("Vista 360 nao ficou pronta para impressao. Tente imprimir novamente.");
           try {
             popup.close();
-          } catch (error) {}
+          } catch (error) { }
           return;
         }
         waitForPopupImages(popup, function () {
@@ -1536,9 +1570,18 @@
     var zoom = mapState.zoom;
     var centerX = lonToWorldX(mapState.lon, zoom);
     var centerY = latToWorldY(mapState.lat, zoom);
-    var left = centerX - photoMap.clientWidth / 2;
-    var top = centerY - photoMap.clientHeight / 2;
+    var width = photoMap.clientWidth;
+    var height = photoMap.clientHeight;
+    var left = centerX - width / 2;
+    var top = centerY - height / 2;
+    var margin = 56;
+    var fragment = document.createDocumentFragment();
     mapPoints.forEach(function (point) {
+      var markerX = lonToWorldX(point.lon, zoom) - left;
+      var markerY = latToWorldY(point.lat, zoom) - top;
+      if (markerX < -margin || markerX > width + margin || markerY < -margin || markerY > height + margin) {
+        return;
+      }
       var marker = document.createElement("button");
       var details = [];
       if (point.takenAt) details.push(formatPhotoDate(point.takenAt));
@@ -1546,15 +1589,16 @@
       if (point.altitude != null) details.push("altitude " + point.altitude + " m");
       marker.type = "button";
       marker.className = "map-marker" + (currentScene && point.scene.data.id === currentScene.data.id ? " active" : "");
-      marker.style.left = Math.round(lonToWorldX(point.lon, zoom) - left) + "px";
-      marker.style.top = Math.round(latToWorldY(point.lat, zoom) - top) + "px";
+      marker.style.left = Math.round(markerX) + "px";
+      marker.style.top = Math.round(markerY) + "px";
       marker.title = details.length ? details.join(" | ") : "Abrir foto";
       if (currentScene && point.scene.data.id === currentScene.data.id && isMapViewConeEnabled()) {
         marker.appendChild(createViewDirectionElement());
       }
       marker.addEventListener("click", function () { switchScene(point.scene); });
-      mapMarkers.appendChild(marker);
+      fragment.appendChild(marker);
     });
+    mapMarkers.appendChild(fragment);
     updateCameraDirectionIndicator();
   }
 
@@ -1584,13 +1628,17 @@
     renderMap();
   }
 
-  function setupMap() {
+  function setupMap(initialScene, shouldFocusInitialScene) {
     mapPoints = scenes.map(getScenePoint).filter(Boolean);
     if (!mapPoints.length) {
       body.classList.add("hide-map");
       return;
     }
-    fitMapToPoints();
+    if (shouldFocusInitialScene) {
+      focusMapOnScene(initialScene);
+    } else {
+      fitMapToPoints();
+    }
     metadataPanel.classList.add("enabled");
     renderMap();
     if (!cameraDirectionFrame) {
@@ -1847,9 +1895,10 @@
     body.classList.toggle("hide-scenes", project.settings.sceneList === false || !showBtnList);
     body.classList.toggle("hide-map-view-cone", !isMapViewConeEnabled());
     buildScenes();
+    var initialScene = findInitialScene();
     renderSceneList();
     setupControls();
-    setupMap();
+    setupMap(initialScene, hasExplicitInitialScene(initialScene));
     loadSketchAnnotations();
     setSketchMode("draw");
     resizeAnnotationOverlay();
@@ -1859,7 +1908,7 @@
       sceneList.classList.add("enabled");
       sceneListToggle.classList.add("enabled");
     }
-    switchScene(findInitialScene());
+    switchScene(initialScene);
   }
 
   function loadProject() {

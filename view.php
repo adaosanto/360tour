@@ -321,6 +321,6 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <script>
     window.__PROJECT_DATA__ = <?= $projectJson ?>;
   </script>
-  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-23"></script>
+  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-28"></script>
 </body>
 </html>
