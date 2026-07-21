@@ -25,6 +25,9 @@
   var autorenameMapTiles = document.getElementById("autorenameMapTiles");
   var autorenameMapLines = document.getElementById("autorenameMapLines");
   var autorenameMapMarkers = document.getElementById("autorenameMapMarkers");
+  var autorenameMapZoomIn = document.getElementById("autorenameMapZoomIn");
+  var autorenameMapZoomOut = document.getElementById("autorenameMapZoomOut");
+  var autorenameMapRecenter = document.getElementById("autorenameMapRecenter");
   var autorenameMatches = document.getElementById("autorenameMatches");
   var sceneHeadingOffset = document.getElementById("sceneHeadingOffset");
   var sceneHeadingOffsetLabel = document.getElementById("sceneHeadingOffsetLabel");
@@ -52,6 +55,10 @@
   var selectedHotspot = null;
   var placingHotspot = null;
   var autorenamePreviewPayload = null;
+  var autorenameMapMatches = [];
+  var autorenameMapPoints = [];
+  var autorenameMapState = { latitude: 0, longitude: 0, zoom: 17 };
+  var autorenameMapDrag = null;
   var uploadWorkflowActive = false;
   var autorenameTileUrlTemplate = "https://mt1.google.com/vt/lyrs=s&hl=en&z={level}&x={col}&y={row}";
   var headingOverlayTileUrlTemplate = "https://tiles.arcgis.com/tiles/MRbkurfLm8nmQrDq/arcgis/rest/services/RasterLrv2026_1/MapServer/tile/{level}/{row}/{col}";
@@ -393,12 +400,14 @@
 
   function chooseAutorenameMapZoom(points, width, height) {
     if (points.length <= 1) return 17;
+    var usableWidth = Math.max(80, width - 42);
+    var usableHeight = Math.max(80, height - 42);
     for (var zoom = 18; zoom >= 2; zoom--) {
       var xs = points.map(function (point) { return lonToWorldX(point.longitude, zoom); });
       var ys = points.map(function (point) { return latToWorldY(point.latitude, zoom); });
       var spanX = Math.max.apply(null, xs) - Math.min.apply(null, xs);
       var spanY = Math.max.apply(null, ys) - Math.min.apply(null, ys);
-      if (spanX <= width - 42 && spanY <= height - 42) return zoom;
+      if (spanX <= usableWidth && spanY <= usableHeight) return zoom;
     }
     return 2;
   }
@@ -410,28 +419,59 @@
       .replace("{row}", row);
   }
 
-  function renderAutorenameMap(matches) {
-    if (!autorenameMap || !autorenameMapTiles || !autorenameMapLines || !autorenameMapMarkers) return;
+  function buildAutorenameMapPoints(matches) {
     var points = [];
-    matches.forEach(function (match) {
+    (matches || []).forEach(function (match) {
       if (match.photo) points.push({ type: "photo", latitude: match.photo.latitude, longitude: match.photo.longitude, match: match });
       if (match.point && match.matched) points.push({ type: "point", latitude: match.point.latitude, longitude: match.point.longitude, match: match });
     });
-    autorenameMap.hidden = !points.length;
+    return points;
+  }
+
+  function updateAutorenameMapControls() {
+    var enabled = !!autorenameMapPoints.length;
+    [autorenameMapZoomIn, autorenameMapZoomOut, autorenameMapRecenter].forEach(function (button) {
+      if (button) button.disabled = !enabled;
+    });
+    if (autorenameMapZoomIn) autorenameMapZoomIn.disabled = !enabled || autorenameMapState.zoom >= 20;
+    if (autorenameMapZoomOut) autorenameMapZoomOut.disabled = !enabled || autorenameMapState.zoom <= 2;
+  }
+
+  function fitAutorenameMapToPoints() {
+    if (!autorenameMapPoints.length) return;
+    var width = autorenameMap.clientWidth || 320;
+    var height = autorenameMap.clientHeight || 260;
+    autorenameMapState.zoom = chooseAutorenameMapZoom(autorenameMapPoints, width, height);
+    var xs = autorenameMapPoints.map(function (point) { return lonToWorldX(point.longitude, autorenameMapState.zoom); });
+    var ys = autorenameMapPoints.map(function (point) { return latToWorldY(point.latitude, autorenameMapState.zoom); });
+    var centerX = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
+    var centerY = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+    autorenameMapState.longitude = worldXToLon(centerX, autorenameMapState.zoom);
+    autorenameMapState.latitude = worldYToLat(centerY, autorenameMapState.zoom);
+  }
+
+  function renderAutorenameMap(matches, options) {
+    if (!autorenameMap || !autorenameMapTiles || !autorenameMapLines || !autorenameMapMarkers) return;
+    if (Array.isArray(matches)) {
+      autorenameMapMatches = matches;
+      autorenameMapPoints = buildAutorenameMapPoints(matches);
+    }
+    var shouldFit = !options || options.fit !== false;
+    autorenameMap.hidden = !autorenameMapPoints.length;
     autorenameMapTiles.innerHTML = "";
     autorenameMapLines.innerHTML = "";
     autorenameMapMarkers.innerHTML = "";
-    if (!points.length) return;
+    if (!autorenameMapPoints.length) {
+      updateAutorenameMapControls();
+      return;
+    }
 
     var width = autorenameMap.clientWidth || 320;
     var height = autorenameMap.clientHeight || 260;
-    var centerX18 = points.reduce(function (sum, point) { return sum + lonToWorldX(point.longitude, 18); }, 0) / points.length;
-    var centerY18 = points.reduce(function (sum, point) { return sum + latToWorldY(point.latitude, 18); }, 0) / points.length;
-    var zoom = chooseAutorenameMapZoom(points, width, height);
-    var centerLon = worldXToLon(centerX18 / Math.pow(2, 18 - zoom), zoom);
-    var centerLat = worldYToLat(centerY18 / Math.pow(2, 18 - zoom), zoom);
-    var centerX = lonToWorldX(centerLon, zoom);
-    var centerY = latToWorldY(centerLat, zoom);
+    if (shouldFit) fitAutorenameMapToPoints();
+    var zoom = autorenameMapState.zoom;
+    var centerX = lonToWorldX(autorenameMapState.longitude, zoom);
+    var centerY = latToWorldY(autorenameMapState.latitude, zoom);
     var left = centerX - width / 2;
     var top = centerY - height / 2;
     var minCol = Math.floor(left / 256);
@@ -460,13 +500,19 @@
       };
     }
 
+    function pointIsNearViewport(point) {
+      var margin = 80;
+      return point.x >= -margin && point.x <= width + margin && point.y >= -margin && point.y <= height + margin;
+    }
+
     autorenameMapLines.setAttribute("viewBox", "0 0 " + width + " " + height);
     autorenameMapLines.setAttribute("width", width);
     autorenameMapLines.setAttribute("height", height);
-    matches.forEach(function (match) {
+    autorenameMapMatches.forEach(function (match) {
       if (!match.matched || !match.photo || !match.point) return;
       var photo = screenPoint(match.photo);
       var point = screenPoint(match.point);
+      if (!pointIsNearViewport(photo) && !pointIsNearViewport(point)) return;
       var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
       line.setAttribute("x1", photo.x.toFixed(1));
       line.setAttribute("y1", photo.y.toFixed(1));
@@ -474,9 +520,10 @@
       line.setAttribute("y2", point.y.toFixed(1));
       autorenameMapLines.appendChild(line);
     });
-    points.forEach(function (point) {
+    autorenameMapPoints.forEach(function (point) {
       var marker = document.createElement("span");
       var screen = screenPoint(point);
+      if (!pointIsNearViewport(screen)) return;
       marker.className = "autorename-marker " + point.type + (point.match.matched ? "" : " unmatched");
       marker.style.left = Math.round(screen.x) + "px";
       marker.style.top = Math.round(screen.y) + "px";
@@ -485,6 +532,36 @@
         : "Ponto ArcGIS: " + point.match.point.id;
       autorenameMapMarkers.appendChild(marker);
     });
+    updateAutorenameMapControls();
+  }
+
+  function zoomAutorenameMap(delta, origin) {
+    if (!autorenameMapPoints.length) return;
+    var oldZoom = autorenameMapState.zoom;
+    var nextZoom = Math.max(2, Math.min(20, oldZoom + delta));
+    if (nextZoom === oldZoom) return;
+
+    if (origin && autorenameMap.clientWidth) {
+      var rect = autorenameMap.getBoundingClientRect();
+      var offsetX = origin.clientX - rect.left - autorenameMap.clientWidth / 2;
+      var offsetY = origin.clientY - rect.top - autorenameMap.clientHeight / 2;
+      var worldX = lonToWorldX(autorenameMapState.longitude, oldZoom) + offsetX;
+      var worldY = latToWorldY(autorenameMapState.latitude, oldZoom) + offsetY;
+      var scale = Math.pow(2, nextZoom - oldZoom);
+      autorenameMapState.longitude = worldXToLon((worldX * scale) - offsetX, nextZoom);
+      autorenameMapState.latitude = worldYToLat((worldY * scale) - offsetY, nextZoom);
+    }
+
+    autorenameMapState.zoom = nextZoom;
+    renderAutorenameMap(null, { fit: false });
+  }
+
+  function panAutorenameMap(start, event) {
+    var centerX = start.centerX - (event.clientX - start.x);
+    var centerY = start.centerY - (event.clientY - start.y);
+    autorenameMapState.longitude = worldXToLon(centerX, autorenameMapState.zoom);
+    autorenameMapState.latitude = worldYToLat(centerY, autorenameMapState.zoom);
+    renderAutorenameMap(null, { fit: false });
   }
 
   function renderAutorenameMatches(payload) {
@@ -1071,8 +1148,126 @@
     });
   }
 
+  if (autorenameMapZoomIn) {
+    autorenameMapZoomIn.addEventListener("click", function (event) {
+      event.stopPropagation();
+      zoomAutorenameMap(1);
+    });
+  }
+
+  if (autorenameMapZoomOut) {
+    autorenameMapZoomOut.addEventListener("click", function (event) {
+      event.stopPropagation();
+      zoomAutorenameMap(-1);
+    });
+  }
+
+  if (autorenameMapRecenter) {
+    autorenameMapRecenter.addEventListener("click", function (event) {
+      event.stopPropagation();
+      fitAutorenameMapToPoints();
+      renderAutorenameMap(null, { fit: false });
+    });
+  }
+
+  if (autorenameMap) {
+    autorenameMap.addEventListener("pointerdown", function (event) {
+      if (!autorenameMapPoints.length || event.button !== 0 || event.target.closest(".autorename-map-controls")) return;
+      autorenameMapDrag = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        centerX: lonToWorldX(autorenameMapState.longitude, autorenameMapState.zoom),
+        centerY: latToWorldY(autorenameMapState.latitude, autorenameMapState.zoom)
+      };
+      autorenameMap.classList.add("dragging");
+      autorenameMap.setPointerCapture(event.pointerId);
+    });
+
+    autorenameMap.addEventListener("pointermove", function (event) {
+      if (!autorenameMapDrag || autorenameMapDrag.id !== event.pointerId) return;
+      panAutorenameMap(autorenameMapDrag, event);
+    });
+
+    function endAutorenameMapDrag(event) {
+      if (!autorenameMapDrag || autorenameMapDrag.id !== event.pointerId) return;
+      autorenameMapDrag = null;
+      autorenameMap.classList.remove("dragging");
+      if (autorenameMap.hasPointerCapture(event.pointerId)) {
+        autorenameMap.releasePointerCapture(event.pointerId);
+      }
+    }
+
+    autorenameMap.addEventListener("pointerup", endAutorenameMapDrag);
+    autorenameMap.addEventListener("pointercancel", endAutorenameMapDrag);
+    autorenameMap.addEventListener("wheel", function (event) {
+      if (!autorenameMapPoints.length) return;
+      event.preventDefault();
+      zoomAutorenameMap(event.deltaY < 0 ? 1 : -1, event);
+    }, { passive: false });
+  }
+
   function supportedPanoramaFile(file) {
     return /\.(jpe?g|png|tiff?)$/i.test(file.name);
+  }
+
+  function isSafeUploadNameChar(character) {
+    return /[0-9A-Za-z._-]/.test(character) || character.toLowerCase() !== character.toUpperCase();
+  }
+
+  function safeUploadNameKey(name) {
+    var source = String(name || "panorama.jpg").split(/[\\/]/).pop();
+    var safe = "";
+    Array.prototype.forEach.call(source, function (character) {
+      if (safe.length >= 120) return;
+      safe += isSafeUploadNameChar(character) ? character : "-";
+    });
+    return (safe || "panorama").toLowerCase();
+  }
+
+  function uploadNameKeys(name) {
+    var direct = String(name || "").trim().toLowerCase();
+    var safe = safeUploadNameKey(name);
+    var keys = {};
+    if (direct) keys[direct] = true;
+    if (safe) keys[safe] = true;
+    return Object.keys(keys);
+  }
+
+  function rememberUploadName(map, name, displayName) {
+    uploadNameKeys(name).forEach(function (key) {
+      map[key] = displayName || name;
+    });
+  }
+
+  function filterNewUploadFiles(files) {
+    var selected = {};
+    var existing = {};
+    var skipped = [];
+    var accepted = [];
+    ((project && project.scenes) || []).forEach(function (scene) {
+      if (scene.sourceFile) rememberUploadName(existing, scene.sourceFile, scene.sourceFile);
+    });
+    files.forEach(function (file) {
+      var keys = uploadNameKeys(file.name);
+      var repeated = keys.some(function (key) { return selected[key] || existing[key]; });
+      if (repeated) {
+        skipped.push(file.name);
+        return;
+      }
+      accepted.push(file);
+      keys.forEach(function (key) {
+        selected[key] = file.name;
+      });
+    });
+    return { accepted: accepted, skipped: skipped.sort(function (a, b) { return a.localeCompare(b); }) };
+  }
+
+  function skippedUploadMessage(names) {
+    var visible = names.slice(0, 8).join(", ");
+    var remaining = names.length - 8;
+    if (remaining > 0) visible += " e mais " + remaining;
+    return names.length + " foto(s) duplicada(s) ignorada(s): " + visible + ".";
   }
 
   function makeUploadBatches(files) {
@@ -1146,15 +1341,25 @@
     if (invalid.length) {
       throw new Error("Arquivo em formato nao permitido: " + invalid[0].name);
     }
+    var filtered = filterNewUploadFiles(files);
+    var skipped = filtered.skipped;
+    files = filtered.accepted;
+    if (!files.length) {
+      progressBox.hidden = false;
+      progressBar.value = 0;
+      progressText.textContent = "Nenhuma foto nova para enviar. " + skippedUploadMessage(skipped);
+      return Promise.resolve();
+    }
+    var skippedMessage = skipped.length ? " " + skippedUploadMessage(skipped) : "";
     var totalBytes = files.reduce(function (sum, file) { return sum + file.size; }, 0);
     var batches = makeUploadBatches(files);
     var uploadedBytes = 0;
     uploadWorkflowActive = true;
     progressBox.hidden = false;
     progressBar.value = 0;
-    progressText.textContent = "Preparando upload de " + files.length + " panorama(s), " + formatBytes(totalBytes) + ".";
+    progressText.textContent = "Preparando upload de " + files.length + " panorama(s), " + formatBytes(totalBytes) + "." + skippedMessage;
     if (addFilesInput) addFilesInput.disabled = true;
-    progressText.textContent = "Salvando configuracoes do projeto...";
+    progressText.textContent = "Salvando configuracoes do projeto..." + skippedMessage;
     return saveProject().then(function () {
       return batches.reduce(function (promise, batch, index) {
         return promise.then(function () {
@@ -1170,7 +1375,7 @@
       progressText.textContent = "Upload concluido. Enfileirando processamento...";
       return processUploadedPanoramas();
     }).then(function () {
-      progressText.textContent = "Processamento iniciado para " + files.length + " panorama(s).";
+      progressText.textContent = "Processamento iniciado para " + files.length + " panorama(s)." + skippedMessage;
       pollProgress();
     }).catch(function (error) {
       uploadWorkflowActive = false;
@@ -1188,6 +1393,7 @@
         uploadFiles(files);
       } catch (error) {
         progressBox.hidden = false;
+        progressBar.value = 0;
         progressText.textContent = error.message;
       }
     });

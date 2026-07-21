@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Editor de tour</title>
-  <link rel="stylesheet" href="/static/editor.css?v=project-editor-18">
+  <link rel="stylesheet" href="/static/editor.css?v=project-editor-21">
 </head>
 
 <body class="editor-page">
@@ -96,6 +96,11 @@
             <div id="autorenameMapTiles" class="autorename-map-tiles"></div>
             <svg id="autorenameMapLines" class="autorename-map-lines" aria-hidden="true"></svg>
             <div id="autorenameMapMarkers" class="autorename-map-markers"></div>
+            <div class="autorename-map-controls" aria-label="Controles do mapa de match">
+              <button id="autorenameMapZoomIn" type="button" aria-label="Aproximar mapa de match">+</button>
+              <button id="autorenameMapZoomOut" type="button" aria-label="Afastar mapa de match">-</button>
+              <button id="autorenameMapRecenter" type="button" aria-label="Reenquadrar matches">C</button>
+            </div>
           </div>
           <div id="autorenameMatches" class="autorename-matches"></div>
         </section>
@@ -234,7 +239,7 @@
   </div>
 
   <script src="/static/marzipano.js"></script>
-  <script src="/static/editor.js?v=project-editor-18"></script>
+  <script src="/static/editor.js?v=project-editor-21"></script>
 </body>
 
 </html>

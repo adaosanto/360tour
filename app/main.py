@@ -704,23 +704,37 @@ async def _save_thumbnail(upload: UploadFile | None, project_dir: Path) -> str |
         raise HTTPException(status_code=400, detail="Thumbnail invalida ou imagem nao suportada.") from exc
 
 
-async def _save_uploads(files: list[UploadFile], incoming_dir: Path) -> list[Path]:
-    paths = []
+def _safe_upload_name(filename: str | None) -> str:
+    original = Path(filename or "panorama.jpg")
+    suffix = original.suffix.lower()
     allowed = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    if suffix not in allowed:
+        raise HTTPException(status_code=400, detail=f"Tipo de arquivo nao permitido: {filename}")
+    return "".join(c if c.isalnum() or c in ".-_" else "-" for c in original.name)[:120] or f"panorama{suffix}"
+
+
+async def _save_uploads(files: list[UploadFile], incoming_dir: Path, existing_names: list[str] | None = None) -> tuple[list[Path], list[str]]:
+    paths = []
+    prepared = []
+    seen = set()
+    skipped = []
+    existing = {name.casefold() for name in existing_names or [] if name}
+    existing.update(path.name.casefold() for path in incoming_dir.iterdir() if path.is_file())
     for upload in files:
-        original = Path(upload.filename or "panorama.jpg")
-        suffix = original.suffix.lower()
-        if suffix not in allowed:
-            raise HTTPException(status_code=400, detail=f"Tipo de arquivo nao permitido: {upload.filename}")
-        safe_name = "".join(c if c.isalnum() or c in ".-_" else "-" for c in original.name)[:120] or f"panorama{suffix}"
+        safe_name = _safe_upload_name(upload.filename)
+        key = safe_name.casefold()
+        if key in seen or key in existing:
+            skipped.append(safe_name)
+            continue
+        seen.add(key)
+        prepared.append((upload, safe_name))
+    for upload, safe_name in prepared:
         target = incoming_dir / safe_name
-        if target.exists():
-            target = incoming_dir / f"{uuid.uuid4().hex}-{safe_name}"
         with target.open("wb") as fh:
             while chunk := await upload.read(1024 * 1024):
                 fh.write(chunk)
         paths.append(target)
-    return paths
+    return paths, sorted(skipped, key=str.casefold)
 
 
 def _process_files(project_id: str, files: list[str], tile_size: int, jpeg_quality: int) -> None:
@@ -832,7 +846,7 @@ async def create_project(
             save_project(project_dir, project)
             with _db_session() as session:
                 upsert_project_record(session, project=project, project_dir=project_dir, status="ready")
-        saved = await _save_uploads(files or [], project_dir / "incoming")
+        saved, skipped = await _save_uploads(files or [], project_dir / "incoming")
     except Exception:
         shutil.rmtree(project_dir, ignore_errors=True)
         progress_state.pop(project_id, None)
@@ -844,7 +858,7 @@ async def create_project(
         raise
     if saved:
         background_tasks.add_task(_process_files, project_id, [p.name for p in saved], tile_size, jpeg_quality)
-    return {"projectId": project_id, "editorUrl": f"/projects/{project_id}"}
+    return {"projectId": project_id, "editorUrl": f"/projects/{project_id}", "skipped": skipped}
 
 
 @app.post("/api/projects/{project_id}/panoramas")
@@ -862,11 +876,13 @@ async def add_panoramas(
     validate_options(tile_size, jpeg_quality)
     if progress_state.get(project_id, {}).get("status") == "processing":
         raise HTTPException(status_code=409, detail="O projeto ainda esta processando.")
-    saved = await _save_uploads(files, project_dir / "incoming")
-    with _db_session() as session:
-        upsert_project_record(session, project=project, project_dir=project_dir, status="processing")
-    background_tasks.add_task(_process_files, project_id, [p.name for p in saved], tile_size, jpeg_quality)
-    return {"projectId": project_id, "queued": len(saved)}
+    existing_names = [scene.get("sourceFile") for scene in project.get("scenes", []) if scene.get("sourceFile")]
+    saved, skipped = await _save_uploads(files, project_dir / "incoming", existing_names)
+    if saved:
+        with _db_session() as session:
+            upsert_project_record(session, project=project, project_dir=project_dir, status="processing")
+        background_tasks.add_task(_process_files, project_id, [p.name for p in saved], tile_size, jpeg_quality)
+    return {"projectId": project_id, "queued": len(saved), "skipped": skipped}
 
 
 @app.post("/api/projects/{project_id}/panoramas/upload")
@@ -876,6 +892,7 @@ async def upload_panoramas_batch(
     clear_existing: Annotated[bool, Form()] = False,
 ):
     project_dir = _project_dir(project_id)
+    project = _normalize_project(load_project(project_dir))
     if progress_state.get(project_id, {}).get("status") == "processing":
         raise HTTPException(status_code=409, detail="O projeto ainda esta processando.")
     incoming_dir = project_dir / "incoming"
@@ -883,15 +900,19 @@ async def upload_panoramas_batch(
         for existing in incoming_dir.iterdir():
             if existing.is_file():
                 existing.unlink(missing_ok=True)
-    saved = await _save_uploads(files, incoming_dir)
+    existing_names = [scene.get("sourceFile") for scene in project.get("scenes", []) if scene.get("sourceFile")]
+    saved, skipped = await _save_uploads(files, incoming_dir, existing_names)
     _touch(project_dir)
+    message = f"{len(saved)} arquivo(s) novo(s) recebidos para processamento."
+    if skipped:
+        message += f" {len(skipped)} duplicado(s) ignorado(s)."
     progress_state[project_id] = {
         "status": "uploading",
         "percent": 0,
-        "message": f"{len(saved)} arquivo(s) recebidos para processamento.",
+        "message": message,
         "errors": [],
     }
-    return {"projectId": project_id, "uploaded": len(saved), "files": [path.name for path in saved]}
+    return {"projectId": project_id, "uploaded": len(saved), "files": [path.name for path in saved], "skipped": skipped}
 
 
 @app.post("/api/projects/{project_id}/panoramas/process")

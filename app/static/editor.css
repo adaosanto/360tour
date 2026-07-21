@@ -1370,6 +1370,12 @@ button.upload-submit.loading {
   border: 1px solid var(--editor-border-strong);
   border-radius: 7px;
   background: #d8dee8;
+  cursor: grab;
+  touch-action: none;
+}
+
+.autorename-map.dragging {
+  cursor: grabbing;
 }
 
 .autorename-map-tiles,
@@ -1386,6 +1392,33 @@ button.upload-submit.loading {
   max-width: none;
   pointer-events: none;
   user-select: none;
+}
+
+.autorename-map-controls {
+  position: absolute;
+  top: 9px;
+  left: 9px;
+  z-index: 4;
+  display: grid;
+  gap: 6px;
+}
+
+.autorename-map-controls button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-color: rgba(23, 32, 42, 0.2);
+  background: rgba(255, 255, 255, 0.92);
+  color: #17202a;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.autorename-map-controls button:hover:not(:disabled) {
+  border-color: rgba(23, 107, 87, 0.38);
+  background: #fff;
+  color: var(--editor-accent);
 }
 
 .autorename-map-lines {
