@@ -70,6 +70,7 @@
   var initialized = false;
   var pollTimer = null;
   var embeddedProject = window.__PROJECT_DATA__ || null;
+  var panoramaZoomMultiplier = 3;
 
   function requestJSON(url) {
     var separator = url.indexOf("?") === -1 ? "?" : "&";
@@ -187,7 +188,7 @@
     var sceneData = scene.data;
     var source = Marzipano.ImageUrlSource.fromString(projectFileUrl(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg"));
     var geometry = new Marzipano.CubeGeometry(sceneData.levels);
-    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
+    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize * panoramaZoomMultiplier, 100 * Math.PI / 180, 120 * Math.PI / 180);
     var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
     var view = new Marzipano.RectilinearView(initialView, limiter);
     var marzipanoScene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
@@ -1102,7 +1103,7 @@
       });
       var source = Marzipano.ImageUrlSource.fromString(projectFileUrl(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg"));
       var geometry = new Marzipano.CubeGeometry(sceneData.levels);
-      var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
+      var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize * panoramaZoomMultiplier, 100 * Math.PI / 180, 120 * Math.PI / 180);
       var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
       var view = new Marzipano.RectilinearView(initialView, limiter);
       printScene = {

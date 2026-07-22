@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Editor de tour</title>
-  <link rel="stylesheet" href="/static/editor.css?v=project-editor-21">
+  <link rel="stylesheet" href="/static/editor.css?v=project-editor-23">
 </head>
 
 <body class="editor-page">
@@ -39,12 +39,12 @@
             <label>Distancia max. (m)
               <input id="autorenameDistance" type="number" min="1" step="1" value="15">
             </label>
-            <label class="autorename-wide">URL do view no CSV
-              <input id="autorenameCsvViewUrl" type="url"
+            <label class="autorename-wide">URL base das imagens
+              <input id="autorenameArcgisViewUrl" type="url"
                 value="https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/">
             </label>
             <label>Ciclo
-              <select id="autorenameCsvCiclo">
+              <select id="autorenameArcgisCiclo" required>
                 <option value="">Selecione</option>
                 <option value="1">Primeiro Trimestre - 1</option>
                 <option value="2">Segundo Trimestre - 2</option>
@@ -55,14 +55,14 @@
               </select>
             </label>
             <label>Profissional
-              <select id="autorenameCsvProfissional">
+              <select id="autorenameArcgisProfissional" required>
                 <option value="">Selecione</option>
                 <option value="3">Adão C Nascimento dos Santos - 3</option>
                 <option value="4">Samira Soares da Silva - 4</option>
               </select>
             </label>
             <label>Finalidade
-              <select id="autorenameCsvFinalidade">
+              <select id="autorenameArcgisFinalidade" required>
                 <option value="">Selecione</option>
                 <option value="1">Fiscalização - 1</option>
                 <option value="2">Acompanhamento de Obras - 2</option>
@@ -71,13 +71,13 @@
               </select>
             </label>
             <label>Departamento solicitante
-              <select id="autorenameCsvDepartamento">
+              <select id="autorenameArcgisDepartamento" required>
                 <option value="">Selecione</option>
                 <option value="1">Geotecnologia - 1</option>
               </select>
             </label>
             <label>Situacao
-              <select id="autorenameCsvSituacao">
+              <select id="autorenameArcgisSituacao" required>
                 <option value="">Selecione</option>
                 <option value="1">Solicitado - 1</option>
                 <option value="2">Imagiado - 2</option>
@@ -85,10 +85,11 @@
               </select>
             </label>
           </div>
-          <div class="button-row">
+          <div class="button-row autorename-actions">
             <button id="previewAutorename" type="button">Preview</button>
             <button id="applyAutorename" type="button" disabled>Aplicar</button>
-            <button id="exportAutorenameCsv" type="button" disabled>CSV</button>
+            <button id="previewArcgisSync" type="button" disabled>Verificar envio</button>
+            <button id="commitArcgisSync" type="button" class="arcgis-submit" disabled>Enviar ao ArcGIS</button>
           </div>
           <p id="autorenameStatus" class="autorename-status">Clique em Preview para buscar os pontos ArcGIS no servidor.
           </p>
@@ -103,6 +104,13 @@
             </div>
           </div>
           <div id="autorenameMatches" class="autorename-matches"></div>
+          <div id="arcgisSyncPanel" class="arcgis-sync-panel" hidden>
+            <div class="arcgis-sync-heading">
+              <strong>Registros da tabela</strong>
+              <span id="arcgisSyncSummary"></span>
+            </div>
+            <div id="arcgisSyncRecords" class="arcgis-sync-records"></div>
+          </div>
         </section>
 
         <section class="editor-section">
@@ -239,7 +247,7 @@
   </div>
 
   <script src="/static/marzipano.js"></script>
-  <script src="/static/editor.js?v=project-editor-21"></script>
+  <script src="/static/editor.js?v=project-editor-23"></script>
 </body>
 
 </html>

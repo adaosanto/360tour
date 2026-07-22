@@ -1363,6 +1363,22 @@ button.upload-submit.loading {
   color: #9a3535;
 }
 
+.autorename-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.app-shell button.arcgis-submit {
+  border-color: var(--editor-accent);
+  background: var(--editor-accent);
+  color: #fff;
+}
+
+.app-shell button.arcgis-submit:hover:not(:disabled) {
+  border-color: var(--editor-accent-strong);
+  background: var(--editor-accent-strong);
+}
+
 .autorename-map {
   position: relative;
   height: 260px;
@@ -1485,6 +1501,100 @@ button.upload-submit.loading {
 .autorename-match.unmatched {
   border-color: #e7c5c5;
   background: #fff7f7;
+}
+
+.arcgis-sync-panel {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--editor-border);
+}
+
+.arcgis-sync-panel[hidden] {
+  display: none;
+}
+
+.arcgis-sync-heading {
+  display: grid;
+  gap: 2px;
+  color: #25302b;
+  font-size: 12px;
+}
+
+.arcgis-sync-heading span {
+  color: var(--editor-muted);
+  line-height: 1.35;
+}
+
+.arcgis-sync-records {
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.arcgis-sync-record {
+  display: grid;
+  gap: 4px;
+  padding: 9px 9px 9px 10px;
+  border: 1px solid #dde5e2;
+  border-left: 3px solid #8a9691;
+  border-radius: 6px;
+  background: #fff;
+  color: #4b5651;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.arcgis-sync-record.pending {
+  border-left-color: var(--editor-accent);
+}
+
+.arcgis-sync-record.created {
+  border-left-color: #277a56;
+  background: #f6fbf8;
+}
+
+.arcgis-sync-record.failed,
+.arcgis-sync-record.invalid {
+  border-left-color: #b54747;
+  background: #fff8f8;
+}
+
+.arcgis-sync-record.existing {
+  border-left-color: #8a9691;
+  background: #f8faf9;
+}
+
+.arcgis-sync-record-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.arcgis-sync-record-header strong {
+  min-width: 0;
+  color: #25302b;
+}
+
+.arcgis-sync-badge {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid #d5dfdb;
+  border-radius: 4px;
+  background: #f4f7f6;
+  color: #46534d;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.arcgis-sync-link {
+  color: #66736d;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
 }
 
 .viewer-area {

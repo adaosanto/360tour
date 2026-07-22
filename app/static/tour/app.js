@@ -27,6 +27,7 @@
   var mapState = { lat: 0, lon: 0, zoom: 16 };
   var mapDrag = null;
   var cameraDirectionFrame = null;
+  var panoramaZoomMultiplier = 3;
 
   function isMapViewConeEnabled() {
     return data.settings.showMapViewCone !== false;
@@ -68,7 +69,7 @@
     var sceneData = scene.data;
     var source = Marzipano.ImageUrlSource.fromString(sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg");
     var geometry = new Marzipano.CubeGeometry(sceneData.levels);
-    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
+    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize * panoramaZoomMultiplier, 100 * Math.PI / 180, 120 * Math.PI / 180);
     var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
     var view = new Marzipano.RectilinearView(initialView, limiter);
     var marzipanoScene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });

@@ -65,7 +65,7 @@ O `view.php` le o mesmo storage de projetos. Use `STORAGE_DIR` se os projetos es
 
 ## ArcGIS autorename
 
-O autorename busca pontos 360 no backend. O browser envia apenas a distancia de match e os campos do CSV; token e URL da query nao saem para o cliente.
+O autorename busca pontos 360 no backend. O browser envia apenas a distancia de match e os campos do formulario; token e URLs do ArcGIS nao saem para o cliente. A sincronizacao consulta a tabela relacionada com paginacao, ignora URLs equivalentes sem query params e tambem reconhece a mesma foto pelo `guid` do ponto combinado com `Obervacao`. Somente os itens confirmados na previa sao criados.
 
 Configure, se necessario:
 
@@ -73,10 +73,12 @@ Configure, se necessario:
 export ARCGIS_TOKEN_URL=http://192.168.173.99:8090/api/sma/token/
 export ARCGIS_360_QUERY_URL=https://services8.arcgis.com/MRbkurfLm8nmQrDq/ArcGIS/rest/services/Imagens_360/FeatureServer/0/query
 export ARCGIS_360_ID_FIELD=OBJECTID
+export ARCGIS_360_IMAGES_URL=https://services8.arcgis.com/MRbkurfLm8nmQrDq/ArcGIS/rest/services/Imagens_360/FeatureServer/1
+export ARCGIS_DATE_TIMEZONE=America/Cuiaba
 export CSV_VIEW_URL_DEFAULT=https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/
 ```
 
-No CSV, `ImagemLink` usa a URL de view informada no editor. Sem template, a base vira `{base}/{project_id}/{photo_id}?showBtnList=false`. O campo `Ano` e extraido da data da foto.
+`ImagemLink` usa a URL de view informada no editor. Sem template, a base vira `{base}/{project_id}/{photo_id}?showBtnList=false`. O campo `Ano` e extraido da data da foto.
 
 ## Endpoints
 

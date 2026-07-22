@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 import json
 import math
@@ -14,6 +15,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
@@ -39,6 +41,11 @@ ARCGIS_360_QUERY_URL = os.getenv(
     "https://services8.arcgis.com/MRbkurfLm8nmQrDq/ArcGIS/rest/services/Imagens_360/FeatureServer/0/query",
 )
 ARCGIS_360_ID_FIELD = os.getenv("ARCGIS_360_ID_FIELD", "OBJECTID")
+ARCGIS_360_IMAGES_URL = os.getenv(
+    "ARCGIS_360_IMAGES_URL",
+    "https://services8.arcgis.com/MRbkurfLm8nmQrDq/ArcGIS/rest/services/Imagens_360/FeatureServer/1",
+)
+ARCGIS_DATE_TIMEZONE = os.getenv("ARCGIS_DATE_TIMEZONE", "America/Cuiaba")
 CSV_VIEW_URL_DEFAULT = os.getenv(
     "CSV_VIEW_URL_DEFAULT",
     "https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/",
@@ -356,6 +363,67 @@ def _fetch_arcgis_token() -> str:
     return token
 
 
+def _arcgis_json_request(
+    endpoint: str,
+    params: dict,
+    *,
+    method: str = "GET",
+    timeout: int = 30,
+    max_bytes: int = 20 * 1024 * 1024,
+) -> dict:
+    if not endpoint.lower().startswith(("https://", "http://")):
+        raise HTTPException(status_code=500, detail="URL do ArcGIS invalida.")
+
+    for attempt in range(2):
+        request_params = {**params, "f": "json", "token": _fetch_arcgis_token()}
+        encoded = urllib.parse.urlencode(request_params).encode("utf-8")
+        if method == "POST":
+            request = urllib.request.Request(
+                endpoint,
+                data=encoded,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+                    "User-Agent": "MarzipanoClone/1.0",
+                },
+                method="POST",
+            )
+        else:
+            separator = "&" if "?" in endpoint else "?"
+            request = urllib.request.Request(
+                f"{endpoint}{separator}{encoded.decode('utf-8')}",
+                headers={"User-Agent": "MarzipanoClone/1.0"},
+            )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read(max_bytes)
+        except urllib.error.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"ArcGIS retornou HTTP {exc.code}.") from exc
+        except urllib.error.URLError as exc:
+            raise HTTPException(status_code=502, detail=f"Nao foi possivel consultar o ArcGIS: {exc.reason}") from exc
+
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="Resposta do ArcGIS nao e um JSON valido.") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=502, detail="Resposta inesperada do ArcGIS.")
+
+        error = payload.get("error")
+        if not error:
+            return payload
+        code = error.get("code") if isinstance(error, dict) else None
+        if code in {498, 499} and attempt == 0:
+            arcgis_token_cache.clear()
+            continue
+        message = error.get("message") if isinstance(error, dict) else "Erro no ArcGIS."
+        details = error.get("details") if isinstance(error, dict) else None
+        if isinstance(details, list) and details:
+            message = f"{message}: {'; '.join(str(item) for item in details if item)}"
+        raise HTTPException(status_code=502, detail=f"ArcGIS: {message}")
+
+    raise HTTPException(status_code=502, detail="Nao foi possivel autenticar no ArcGIS.")
+
+
 def _arcgis_geojson_url(arcgis_url: str, token: str) -> str:
     parts = urllib.parse.urlsplit(arcgis_url)
     query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
@@ -638,6 +706,250 @@ def _autorename_csv(project_id: str, project_dir: Path, payload: dict, base_url:
     writer.writeheader()
     writer.writerows(rows)
     return output.getvalue()
+
+
+def _required_arcgis_code(payload: dict, key: str, label: str, allowed: set[int]) -> int:
+    value = _csv_payload_value(payload, key)
+    try:
+        code = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Selecione {label}.") from exc
+    if code not in allowed:
+        raise HTTPException(status_code=400, detail=f"Valor invalido para {label}.")
+    return code
+
+
+def _arcgis_sync_form_values(payload: dict) -> dict:
+    return {
+        "Ciclo": _required_arcgis_code(payload, "ciclo", "o ciclo", {1, 2, 3, 4, 5, 6}),
+        "Profissional": _required_arcgis_code(payload, "profissional", "o profissional", {3, 4}),
+        "Finalidade": _required_arcgis_code(payload, "finalidade", "a finalidade", {1, 2, 3, 4}),
+        "DepartamentoSolicitante": _required_arcgis_code(
+            payload,
+            "departamentoSolicitante",
+            "o departamento solicitante",
+            {1},
+        ),
+        "Situacao": _required_arcgis_code(payload, "situacao", "a situacao", {1, 2, 3}),
+    }
+
+
+def _arcgis_date_milliseconds(value) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        timezone = ZoneInfo(ARCGIS_DATE_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        timezone = dt.timezone.utc
+    try:
+        parsed = dt.datetime.strptime(text[:10], "%Y-%m-%d").replace(tzinfo=timezone)
+    except ValueError:
+        return None
+    return int(parsed.timestamp() * 1000)
+
+
+def _normalized_arcgis_guid(value) -> str:
+    return str(value or "").strip().strip("{}").lower()
+
+
+def _normalized_photo_name(value) -> str:
+    text = urllib.parse.unquote(str(value or "").strip()).replace("\\", "/")
+    return text.rsplit("/", 1)[-1].casefold()
+
+
+def _normalized_image_link(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parts = urllib.parse.urlsplit(text)
+    path = parts.path.rstrip("/") or "/"
+    return urllib.parse.urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, "", ""))
+
+
+def _fetch_arcgis_image_index() -> tuple[set[str], set[tuple[str, str]], int]:
+    endpoint = f"{ARCGIS_360_IMAGES_URL.rstrip('/')}/query"
+    page_size = 2000
+    offset = 0
+    feature_count = 0
+    image_links: set[str] = set()
+    photo_identities: set[tuple[str, str]] = set()
+    seen_object_ids: set[str] = set()
+
+    while True:
+        response = _arcgis_json_request(
+            endpoint,
+            {
+                "where": "1=1",
+                "outFields": "OBJECTID,ImagemLink,guid,Obervacao",
+                "returnGeometry": "false",
+                "orderByFields": "OBJECTID ASC",
+                "resultOffset": offset,
+                "resultRecordCount": page_size,
+            },
+        )
+        features = response.get("features")
+        if not isinstance(features, list):
+            raise HTTPException(status_code=502, detail="Consulta da tabela ArcGIS nao retornou features.")
+        if not features:
+            break
+
+        new_object_ids = set()
+        for feature in features:
+            attributes = feature.get("attributes") if isinstance(feature, dict) else None
+            if not isinstance(attributes, dict):
+                continue
+            object_id = str(attributes.get("OBJECTID") or "")
+            if object_id:
+                new_object_ids.add(object_id)
+            image_link = _normalized_image_link(attributes.get("ImagemLink"))
+            if image_link:
+                image_links.add(image_link)
+            guid = _normalized_arcgis_guid(attributes.get("guid"))
+            photo_name = _normalized_photo_name(attributes.get("Obervacao"))
+            if guid and photo_name:
+                photo_identities.add((guid, photo_name))
+        if new_object_ids and new_object_ids.issubset(seen_object_ids):
+            raise HTTPException(status_code=502, detail="A paginacao da tabela ArcGIS repetiu a mesma pagina.")
+        seen_object_ids.update(new_object_ids)
+        feature_count += len(features)
+        offset += len(features)
+        if len(features) < page_size and not response.get("exceededTransferLimit"):
+            break
+        if offset > 2_000_000:
+            raise HTTPException(status_code=502, detail="A tabela ArcGIS excedeu o limite de paginacao esperado.")
+
+    return image_links, photo_identities, feature_count
+
+
+def _arcgis_image_candidates(project_id: str, preview: dict, payload: dict) -> list[dict]:
+    fixed_values = _arcgis_sync_form_values(payload)
+    view_url = _csv_view_url(payload)
+    duplicate_point_ids = set(preview.get("duplicatePointIds") or [])
+    candidates = []
+    candidate_links: set[str] = set()
+
+    for match in preview.get("matches") or []:
+        if not match.get("matched"):
+            continue
+        point = match.get("point") or {}
+        scene_id = str(match.get("newId") or match.get("sceneId") or "")
+        image_link = _scene_link(view_url, project_id, scene_id).strip()
+        guid = _csv_guid(point.get("guid"))
+        invalid_reason = ""
+        autorename_applied = (
+            str(match.get("sceneId") or "") == str(match.get("newId") or "")
+            and str(match.get("sceneName") or "") == str(match.get("newName") or "")
+        )
+        if not autorename_applied:
+            invalid_reason = "Aplique o autorename antes de sincronizar esta imagem."
+        elif str(match.get("newId") or "") in duplicate_point_ids:
+            invalid_reason = "Mais de uma foto corresponde ao mesmo ponto neste projeto."
+        elif not guid:
+            invalid_reason = "O ponto correspondente nao possui GlobalID."
+        elif not image_link:
+            invalid_reason = "Nao foi possivel montar o ImagemLink."
+        elif image_link in candidate_links:
+            invalid_reason = "Outra foto deste projeto gera o mesmo ImagemLink."
+        candidate_links.add(image_link)
+
+        attributes = {
+            "guid": guid,
+            "Altitude": str(match.get("height") or "")[:255],
+            "Ciclo": fixed_values["Ciclo"],
+            "DataRealizacao": _arcgis_date_milliseconds(match.get("realizationDate")),
+            "ImagemLink": image_link,
+            "Profissional": fixed_values["Profissional"],
+            "Finalidade": fixed_values["Finalidade"],
+            "DepartamentoSolicitante": fixed_values["DepartamentoSolicitante"],
+            "Obervacao": str(match.get("sourceFile") or match.get("sceneName") or match.get("sceneId") or "")[:255],
+            "Situacao": fixed_values["Situacao"],
+            "Ano": str(match.get("year") or "")[:256],
+        }
+        candidates.append({
+            "sceneId": match.get("sceneId"),
+            "sourceFile": match.get("sourceFile") or match.get("sceneName") or match.get("sceneId") or "",
+            "pointId": point.get("id") or match.get("newId") or "",
+            "distanceMeters": match.get("distanceMeters"),
+            "imageLink": image_link,
+            "attributes": attributes,
+            "status": "invalid" if invalid_reason else "pending",
+            "reason": invalid_reason or None,
+        })
+    return candidates
+
+
+def _autorename_arcgis_sync_preview(project_id: str, project_dir: Path, payload: dict) -> dict:
+    match_preview = _autorename_preview(project_dir, payload)
+    candidates = _arcgis_image_candidates(project_id, match_preview, payload)
+    existing_links, existing_photo_identities, existing_feature_count = _fetch_arcgis_image_index()
+    for candidate in candidates:
+        if candidate["status"] != "pending":
+            continue
+        attributes = candidate["attributes"]
+        normalized_link = _normalized_image_link(candidate["imageLink"])
+        photo_identity = (
+            _normalized_arcgis_guid(attributes.get("guid")),
+            _normalized_photo_name(attributes.get("Obervacao")),
+        )
+        if normalized_link and normalized_link in existing_links:
+            candidate["status"] = "existing"
+            candidate["reason"] = "ImagemLink ja existe na tabela ArcGIS, desconsiderando query params."
+        elif all(photo_identity) and photo_identity in existing_photo_identities:
+            candidate["status"] = "existing"
+            candidate["reason"] = "A mesma foto ja existe para este ponto, embora o projeto ou a URL seja diferente."
+
+    return {
+        "pointCount": match_preview["pointCount"],
+        "sceneCount": match_preview["sceneCount"],
+        "matchedCount": match_preview["matchedCount"],
+        "existingFeatureCount": existing_feature_count,
+        "createCount": sum(1 for item in candidates if item["status"] == "pending"),
+        "alreadyExistsCount": sum(1 for item in candidates if item["status"] == "existing"),
+        "invalidCount": sum(1 for item in candidates if item["status"] == "invalid"),
+        "records": candidates,
+    }
+
+
+def _add_arcgis_image_features(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
+    endpoint = f"{ARCGIS_360_IMAGES_URL.rstrip('/')}/addFeatures"
+    created = []
+    failed = []
+    batch_size = 100
+    for start in range(0, len(candidates), batch_size):
+        batch = candidates[start:start + batch_size]
+        response = _arcgis_json_request(
+            endpoint,
+            {
+                "features": json.dumps(
+                    [{"attributes": item["attributes"]} for item in batch],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                "rollbackOnFailure": "true",
+            },
+            method="POST",
+            timeout=60,
+        )
+        results = response.get("addResults")
+        if not isinstance(results, list) or len(results) != len(batch):
+            raise HTTPException(status_code=502, detail="ArcGIS retornou um resultado incompleto no addFeatures.")
+        for candidate, result in zip(batch, results):
+            record = {key: value for key, value in candidate.items() if key != "attributes"}
+            if isinstance(result, dict) and result.get("success"):
+                record.update({
+                    "status": "created",
+                    "objectId": result.get("objectId"),
+                    "globalId": result.get("globalId"),
+                    "reason": None,
+                })
+                created.append(record)
+            else:
+                error = result.get("error") if isinstance(result, dict) else None
+                message = error.get("description") if isinstance(error, dict) else "Falha ao criar registro."
+                record.update({"status": "failed", "reason": message})
+                failed.append(record)
+    return created, failed
 
 
 def _create_project(
@@ -1080,6 +1392,47 @@ async def autorename_project_export_csv(project_id: str, request: Request):
             "Cache-Control": "no-store",
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
+    )
+
+
+@app.post("/api/projects/{project_id}/autorename/arcgis/preview")
+async def autorename_project_arcgis_preview(project_id: str, request: Request):
+    project_dir = _project_dir(project_id)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload invalido.")
+    preview = _autorename_arcgis_sync_preview(project_id, project_dir, payload)
+    return JSONResponse(preview, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/projects/{project_id}/autorename/arcgis/commit")
+async def autorename_project_arcgis_commit(project_id: str, request: Request):
+    project_dir = _project_dir(project_id)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload invalido.")
+
+    # Reconsulta a tabela imediatamente antes da escrita para evitar duplicidade entre preview e confirmacao.
+    preview = _autorename_arcgis_sync_preview(project_id, project_dir, payload)
+    pending = [record for record in preview["records"] if record.get("status") == "pending"]
+    created, failed = _add_arcgis_image_features(pending) if pending else ([], [])
+    unchanged = []
+    for record in preview["records"]:
+        if record.get("status") == "pending":
+            continue
+        unchanged.append({key: value for key, value in record.items() if key != "attributes"})
+
+    return JSONResponse(
+        {
+            "existingFeatureCount": preview["existingFeatureCount"],
+            "submittedCount": len(pending),
+            "createdCount": len(created),
+            "alreadyExistsCount": preview["alreadyExistsCount"],
+            "invalidCount": preview["invalidCount"],
+            "failedCount": len(failed),
+            "records": unchanged + created + failed,
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 

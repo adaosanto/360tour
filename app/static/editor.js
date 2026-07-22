@@ -11,15 +11,16 @@
   var viewReadout = document.getElementById("viewReadout");
   var addFilesInput = document.getElementById("addFiles");
   var autorenameDistance = document.getElementById("autorenameDistance");
-  var autorenameCsvViewUrl = document.getElementById("autorenameCsvViewUrl");
-  var autorenameCsvCiclo = document.getElementById("autorenameCsvCiclo");
-  var autorenameCsvProfissional = document.getElementById("autorenameCsvProfissional");
-  var autorenameCsvFinalidade = document.getElementById("autorenameCsvFinalidade");
-  var autorenameCsvDepartamento = document.getElementById("autorenameCsvDepartamento");
-  var autorenameCsvSituacao = document.getElementById("autorenameCsvSituacao");
+  var autorenameArcgisViewUrl = document.getElementById("autorenameArcgisViewUrl");
+  var autorenameArcgisCiclo = document.getElementById("autorenameArcgisCiclo");
+  var autorenameArcgisProfissional = document.getElementById("autorenameArcgisProfissional");
+  var autorenameArcgisFinalidade = document.getElementById("autorenameArcgisFinalidade");
+  var autorenameArcgisDepartamento = document.getElementById("autorenameArcgisDepartamento");
+  var autorenameArcgisSituacao = document.getElementById("autorenameArcgisSituacao");
   var previewAutorename = document.getElementById("previewAutorename");
   var applyAutorename = document.getElementById("applyAutorename");
-  var exportAutorenameCsv = document.getElementById("exportAutorenameCsv");
+  var previewArcgisSync = document.getElementById("previewArcgisSync");
+  var commitArcgisSync = document.getElementById("commitArcgisSync");
   var autorenameStatus = document.getElementById("autorenameStatus");
   var autorenameMap = document.getElementById("autorenameMap");
   var autorenameMapTiles = document.getElementById("autorenameMapTiles");
@@ -29,6 +30,9 @@
   var autorenameMapZoomOut = document.getElementById("autorenameMapZoomOut");
   var autorenameMapRecenter = document.getElementById("autorenameMapRecenter");
   var autorenameMatches = document.getElementById("autorenameMatches");
+  var arcgisSyncPanel = document.getElementById("arcgisSyncPanel");
+  var arcgisSyncSummary = document.getElementById("arcgisSyncSummary");
+  var arcgisSyncRecords = document.getElementById("arcgisSyncRecords");
   var sceneHeadingOffset = document.getElementById("sceneHeadingOffset");
   var sceneHeadingOffsetLabel = document.getElementById("sceneHeadingOffsetLabel");
   var sceneCameraYaw = document.getElementById("sceneCameraYaw");
@@ -55,6 +59,7 @@
   var selectedHotspot = null;
   var placingHotspot = null;
   var autorenamePreviewPayload = null;
+  var arcgisSyncPreviewPayload = null;
   var autorenameMapMatches = [];
   var autorenameMapPoints = [];
   var autorenameMapState = { latitude: 0, longitude: 0, zoom: 17 };
@@ -69,21 +74,13 @@
   var headingMapDrag = null;
   var uploadBatchMaxFiles = 5;
   var uploadBatchMaxBytes = 750 * 1024 * 1024;
+  var panoramaZoomMultiplier = 3;
 
   function requestJSON(url, options) {
     return fetch(url, options || {}).then(function (response) {
       return response.json().then(function (payload) {
         if (!response.ok) throw new Error(payload.detail || "Falha na requisicao.");
         return payload;
-      });
-    });
-  }
-
-  function requestBlob(url, options) {
-    return fetch(url, options || {}).then(function (response) {
-      if (response.ok) return response.blob();
-      return response.json().then(function (payload) {
-        throw new Error(payload.detail || "Falha na requisicao.");
       });
     });
   }
@@ -362,21 +359,45 @@
     return element ? element.value.trim() : "";
   }
 
-  function autorenameCsvPayload() {
+  function autorenameArcgisPayload() {
     var payload = autorenamePayload();
-    payload.viewUrl = fieldValue(autorenameCsvViewUrl);
-    payload.ciclo = fieldValue(autorenameCsvCiclo);
-    payload.profissional = fieldValue(autorenameCsvProfissional);
-    payload.finalidade = fieldValue(autorenameCsvFinalidade);
-    payload.departamentoSolicitante = fieldValue(autorenameCsvDepartamento);
-    payload.situacao = fieldValue(autorenameCsvSituacao);
+    payload.viewUrl = fieldValue(autorenameArcgisViewUrl);
+    payload.ciclo = fieldValue(autorenameArcgisCiclo);
+    payload.profissional = fieldValue(autorenameArcgisProfissional);
+    payload.finalidade = fieldValue(autorenameArcgisFinalidade);
+    payload.departamentoSolicitante = fieldValue(autorenameArcgisDepartamento);
+    payload.situacao = fieldValue(autorenameArcgisSituacao);
     return payload;
+  }
+
+  function validateArcgisSyncForm() {
+    var fields = [
+      autorenameArcgisViewUrl,
+      autorenameArcgisCiclo,
+      autorenameArcgisProfissional,
+      autorenameArcgisFinalidade,
+      autorenameArcgisDepartamento,
+      autorenameArcgisSituacao
+    ];
+    for (var index = 0; index < fields.length; index++) {
+      if (fields[index] && !fields[index].reportValidity()) return false;
+    }
+    return true;
+  }
+
+  function autorenameIsApplied(payload) {
+    var matched = ((payload && payload.matches) || []).filter(function (match) { return match.matched; });
+    return !!matched.length && matched.every(function (match) {
+      return String(match.sceneId || "") === String(match.newId || "")
+        && String(match.sceneName || "") === String(match.newName || "");
+    });
   }
 
   function setAutorenameLoading(isLoading) {
     if (previewAutorename) previewAutorename.disabled = isLoading;
     if (applyAutorename) applyAutorename.disabled = isLoading || !autorenamePreviewPayload || !autorenamePreviewPayload.matchedCount || (autorenamePreviewPayload.duplicatePointIds || []).length;
-    if (exportAutorenameCsv) exportAutorenameCsv.disabled = isLoading || !autorenamePreviewPayload || !autorenamePreviewPayload.matchedCount || (autorenamePreviewPayload.duplicatePointIds || []).length;
+    if (previewArcgisSync) previewArcgisSync.disabled = isLoading || !autorenameIsApplied(autorenamePreviewPayload) || (autorenamePreviewPayload.duplicatePointIds || []).length;
+    if (commitArcgisSync) commitArcgisSync.disabled = isLoading || !arcgisSyncPreviewPayload || !arcgisSyncPreviewPayload.createCount;
   }
 
   function lonToWorldX(lon, zoom) {
@@ -587,19 +608,100 @@
     });
   }
 
+  function resetArcgisSyncPreview() {
+    arcgisSyncPreviewPayload = null;
+    if (commitArcgisSync) commitArcgisSync.disabled = true;
+    if (arcgisSyncPanel) arcgisSyncPanel.hidden = true;
+    if (arcgisSyncRecords) arcgisSyncRecords.innerHTML = "";
+  }
+
+  function renderArcgisSyncRecords(payload) {
+    if (!arcgisSyncPanel || !arcgisSyncSummary || !arcgisSyncRecords) return;
+    arcgisSyncPanel.hidden = false;
+    arcgisSyncRecords.innerHTML = "";
+
+    var statusLabels = {
+      pending: "Sera criado",
+      existing: "Ja existe",
+      invalid: "Invalido",
+      created: "Criado",
+      failed: "Falhou"
+    };
+    var records = (payload.records || []).slice().sort(function (left, right) {
+      var order = { pending: 0, failed: 1, invalid: 2, existing: 3, created: 4 };
+      var leftOrder = Object.prototype.hasOwnProperty.call(order, left.status) ? order[left.status] : 9;
+      var rightOrder = Object.prototype.hasOwnProperty.call(order, right.status) ? order[right.status] : 9;
+      return leftOrder - rightOrder;
+    });
+
+    records.forEach(function (record) {
+      var item = document.createElement("div");
+      var header = document.createElement("div");
+      var title = document.createElement("strong");
+      var badge = document.createElement("span");
+      var detail = document.createElement("span");
+      var link = document.createElement("span");
+      item.className = "arcgis-sync-record " + (record.status || "invalid");
+      header.className = "arcgis-sync-record-header";
+      title.textContent = record.sourceFile || record.sceneId || "Imagem";
+      badge.className = "arcgis-sync-badge";
+      badge.textContent = statusLabels[record.status] || record.status || "Invalido";
+      detail.textContent = "Ponto " + (record.pointId || "-") + (record.reason ? " | " + record.reason : "");
+      link.className = "arcgis-sync-link";
+      link.textContent = record.imageLink || "Sem ImagemLink";
+      header.appendChild(title);
+      header.appendChild(badge);
+      item.appendChild(header);
+      item.appendChild(detail);
+      item.appendChild(link);
+      arcgisSyncRecords.appendChild(item);
+    });
+
+    if (Object.prototype.hasOwnProperty.call(payload, "submittedCount")) {
+      arcgisSyncSummary.textContent = payload.createdCount + " criado(s), " + payload.alreadyExistsCount + " ja existente(s), " + payload.failedCount + " falha(s).";
+    } else {
+      arcgisSyncSummary.textContent = payload.createCount + " sera(ao) criado(s), " + payload.alreadyExistsCount + " ja existe(m), " + payload.invalidCount + " invalido(s).";
+    }
+  }
+
+  function renderArcgisSyncPreview(payload) {
+    arcgisSyncPreviewPayload = payload;
+    renderArcgisSyncRecords(payload);
+    if (commitArcgisSync) commitArcgisSync.disabled = !payload.createCount;
+    setAutorenameStatus(
+      payload.createCount
+        ? payload.createCount + " registro(s) pronto(s) para envio. A tabela possui " + payload.existingFeatureCount + " registro(s)."
+        : "Nenhum registro novo para enviar. " + payload.alreadyExistsCount + " foto(s) ja existe(m).",
+      !!payload.invalidCount
+    );
+  }
+
+  function renderArcgisSyncResult(payload) {
+    arcgisSyncPreviewPayload = null;
+    renderArcgisSyncRecords(payload);
+    if (commitArcgisSync) commitArcgisSync.disabled = true;
+    var message = payload.createdCount + " registro(s) criado(s) no ArcGIS.";
+    if (payload.alreadyExistsCount) message += " " + payload.alreadyExistsCount + " duplicado(s) ignorado(s).";
+    if (payload.failedCount) message += " " + payload.failedCount + " falha(s).";
+    setAutorenameStatus(message, !!payload.failedCount || !!payload.invalidCount);
+  }
+
   function renderAutorenamePreview(payload) {
     autorenamePreviewPayload = payload;
+    resetArcgisSyncPreview();
     var duplicateIds = payload.duplicatePointIds || [];
     var status = payload.matchedCount + " de " + payload.sceneCount + " cenas com match em " + payload.pointCount + " pontos ArcGIS.";
     if (duplicateIds.length) {
       status += " Pontos duplicados: " + duplicateIds.join(", ") + ".";
+    } else if (payload.matchedCount && !autorenameIsApplied(payload)) {
+      status += " Aplique o autorename antes de verificar o envio.";
     }
     setAutorenameStatus(status, !!duplicateIds.length);
     if (applyAutorename) {
       applyAutorename.disabled = !payload.matchedCount || !!duplicateIds.length;
     }
-    if (exportAutorenameCsv) {
-      exportAutorenameCsv.disabled = !payload.matchedCount || !!duplicateIds.length;
+    if (previewArcgisSync) {
+      previewArcgisSync.disabled = !autorenameIsApplied(payload) || !!duplicateIds.length;
     }
     renderAutorenameMatches(payload);
     renderAutorenameMap(payload.matches || []);
@@ -664,7 +766,7 @@
     var sceneData = scene.data;
     var source = Marzipano.ImageUrlSource.fromString("/project-files/" + projectId + "/" + sceneData.tilePath + "/{z}/{f}/{y}/{x}.jpg");
     var geometry = new Marzipano.CubeGeometry(sceneData.levels);
-    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize, 100 * Math.PI / 180, 120 * Math.PI / 180);
+    var limiter = Marzipano.RectilinearView.limit.traditional(sceneData.faceSize * panoramaZoomMultiplier, 100 * Math.PI / 180, 120 * Math.PI / 180);
     var initialView = sceneData.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 };
     var view = new Marzipano.RectilinearView(initialView, limiter);
     scene.scene = viewer.createScene({ source: source, geometry: geometry, view: view, pinFirstLevel: true });
@@ -1074,8 +1176,9 @@
         })
         .catch(function (error) {
           autorenamePreviewPayload = null;
+          resetArcgisSyncPreview();
           if (applyAutorename) applyAutorename.disabled = true;
-          if (exportAutorenameCsv) exportAutorenameCsv.disabled = true;
+          if (previewArcgisSync) previewArcgisSync.disabled = true;
           setAutorenameStatus(error.message, true);
         })
         .finally(function () {
@@ -1115,29 +1218,51 @@
     });
   }
 
-  if (exportAutorenameCsv) {
-    exportAutorenameCsv.addEventListener("click", function () {
+  if (previewArcgisSync) {
+    previewArcgisSync.addEventListener("click", function () {
       if (!autorenamePreviewPayload || !autorenamePreviewPayload.matchedCount) return;
-      setAutorenameStatus("Gerando CSV dos matches...");
+      if (!validateArcgisSyncForm()) return;
+      setAutorenameStatus("Consultando todas as imagens da tabela ArcGIS...");
       setAutorenameLoading(true);
       saveProject()
         .then(function () {
-          return requestBlob("/api/projects/" + projectId + "/autorename/export-csv", {
+          return requestJSON("/api/projects/" + projectId + "/autorename/arcgis/preview", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(autorenameCsvPayload())
+            body: JSON.stringify(autorenameArcgisPayload())
           });
         })
-        .then(function (blob) {
-          var objectUrl = URL.createObjectURL(blob);
-          var link = document.createElement("a");
-          link.href = objectUrl;
-          link.download = "autorename-matches-" + projectId + ".csv";
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1000);
-          setAutorenameStatus("CSV gerado com " + autorenamePreviewPayload.matchedCount + " matches.");
+        .then(function (payload) {
+          renderArcgisSyncPreview(payload);
+        })
+        .catch(function (error) {
+          resetArcgisSyncPreview();
+          setAutorenameStatus(error.message, true);
+        })
+        .finally(function () {
+          setAutorenameLoading(false);
+        });
+    });
+  }
+
+  if (commitArcgisSync) {
+    commitArcgisSync.addEventListener("click", function () {
+      if (!arcgisSyncPreviewPayload || !arcgisSyncPreviewPayload.createCount) return;
+      if (!validateArcgisSyncForm()) return;
+      var count = arcgisSyncPreviewPayload.createCount;
+      if (!confirm("Criar " + count + " registro(s) na tabela de imagens do ArcGIS?")) return;
+      setAutorenameStatus("Revalidando duplicados e enviando ao ArcGIS...");
+      setAutorenameLoading(true);
+      saveProject()
+        .then(function () {
+          return requestJSON("/api/projects/" + projectId + "/autorename/arcgis/commit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(autorenameArcgisPayload())
+          });
+        })
+        .then(function (payload) {
+          renderArcgisSyncResult(payload);
         })
         .catch(function (error) {
           setAutorenameStatus(error.message, true);
@@ -1147,6 +1272,22 @@
         });
     });
   }
+
+  [
+    autorenameArcgisViewUrl,
+    autorenameArcgisCiclo,
+    autorenameArcgisProfissional,
+    autorenameArcgisFinalidade,
+    autorenameArcgisDepartamento,
+    autorenameArcgisSituacao
+  ].forEach(function (field) {
+    if (!field) return;
+    field.addEventListener("change", function () {
+      if (!arcgisSyncPreviewPayload) return;
+      resetArcgisSyncPreview();
+      setAutorenameStatus("Formulario alterado. Verifique o envio novamente.");
+    });
+  });
 
   if (autorenameMapZoomIn) {
     autorenameMapZoomIn.addEventListener("click", function (event) {
