@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import ipaddress
 import io
 import json
 import math
@@ -23,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-from .database import ProjectRecord, build_session_factory, make_database_url, upsert_project_record
+from .database import ProjectRecord, build_session_factory, insert_photo_access_log, make_database_url, upsert_project_record
 from .panorama_processor import PanoramaError, extract_photo_metadata, load_project, process_panorama, save_project, validate_options
 from .tour_exporter import export_project
 
@@ -46,6 +47,7 @@ ARCGIS_360_IMAGES_URL = os.getenv(
     "https://services8.arcgis.com/MRbkurfLm8nmQrDq/ArcGIS/rest/services/Imagens_360/FeatureServer/1",
 )
 ARCGIS_DATE_TIMEZONE = os.getenv("ARCGIS_DATE_TIMEZONE", "America/Cuiaba")
+TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "true").strip().lower() not in {"0", "false", "no", "off"}
 CSV_VIEW_URL_DEFAULT = os.getenv(
     "CSV_VIEW_URL_DEFAULT",
     "https://georaster.lucasdorioverde.mt.gov.br/fotos/app360/index.php/",
@@ -76,6 +78,34 @@ DEFAULT_PROJECT_SETTINGS = {
 
 def _db_session():
     return SessionLocal()
+
+
+def _valid_client_ip(value: str | None) -> str | None:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return None
+    if candidate.startswith("[") and "]" in candidate:
+        candidate = candidate[1:candidate.index("]")]
+    elif candidate.count(":") == 1 and "." in candidate:
+        candidate = candidate.split(":", 1)[0]
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return None
+
+
+def _request_client_ip(request: Request) -> str:
+    if TRUST_PROXY_HEADERS:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        for candidate in forwarded_for.split(","):
+            address = _valid_client_ip(candidate)
+            if address:
+                return address
+        real_ip = _valid_client_ip(request.headers.get("x-real-ip"))
+        if real_ip:
+            return real_ip
+    direct_ip = _valid_client_ip(request.client.host if request.client else None)
+    return direct_ip or "0.0.0.0"
 
 
 def _project_dir(project_id: str) -> Path:
@@ -1311,6 +1341,37 @@ async def project_data(project_id: str):
     _backfill_missing_photo_metadata(project_dir, project)
     _sync_project_record(project_dir)
     return JSONResponse(project, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/projects/{project_id}/metrics/photo-access")
+async def record_photo_access(project_id: str, request: Request):
+    project_dir = _project_dir(project_id)
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > 4096:
+        raise HTTPException(status_code=413, detail="Payload de metrica muito grande.")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Payload de metrica invalido.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload de metrica invalido.")
+
+    photo_id = str(payload.get("photoId") or "").strip()
+    if not photo_id or len(photo_id) > 255:
+        raise HTTPException(status_code=400, detail="ID da foto invalido.")
+    project = _normalize_project(load_project(project_dir))
+    if not any(str(scene.get("id") or "") == photo_id for scene in project.get("scenes") or []):
+        raise HTTPException(status_code=404, detail="Foto nao encontrada neste projeto.")
+
+    with _db_session() as session:
+        insert_photo_access_log(
+            session,
+            project_id=project_id,
+            photo_id=photo_id,
+            ip_address=_request_client_ip(request),
+            accessed_at=int(time.time()),
+        )
+    return Response(status_code=204)
 
 
 @app.post("/api/projects/{project_id}/autorename/preview")

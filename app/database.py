@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Integer, String, create_engine
+from sqlalchemy import BigInteger, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -21,6 +21,16 @@ class ProjectRecord(Base):
     status: Mapped[str] = mapped_column(String(32), default="saved", nullable=False)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class PhotoAccessLog(Base):
+    __tablename__ = "photo_access_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    photo_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    accessed_at: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
 
 def make_database_url(storage_dir: Path, configured_url: str | None) -> str:
@@ -59,5 +69,24 @@ def upsert_project_record(session: Session, *, project: dict, project_dir: Path,
         record.scene_count = len(project.get("scenes") or [])
         record.status = status
         record.updated_at = now
+    session.commit()
+    return record
+
+
+def insert_photo_access_log(
+    session: Session,
+    *,
+    project_id: str,
+    photo_id: str,
+    ip_address: str,
+    accessed_at: int,
+) -> PhotoAccessLog:
+    record = PhotoAccessLog(
+        project_id=project_id,
+        photo_id=photo_id,
+        ip_address=ip_address,
+        accessed_at=accessed_at,
+    )
+    session.add(record)
     session.commit()
     return record

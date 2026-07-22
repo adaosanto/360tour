@@ -21,6 +21,7 @@ Aplicacao simples em FastAPI para transformar panoramas 360 equiretangulares em 
 - Mapa no visualizador e no tour exportado com tiles satelite e marcadores das fotos com coordenadas EXIF.
 - Data da foto a partir do EXIF, mapa navegavel por drag/wheel e opcao para exibir o campo Foto nos metadados.
 - Projetos por UUID indexados em SQLite com SQLAlchemy.
+- Log de acesso por foto no SQLite, com projeto, foto, IP e horario UTC; tiles nao geram eventos.
 - Storage fisico configuravel para uploads, tiles, assets, exports e `project.json`.
 
 ## Instalar
@@ -118,6 +119,8 @@ Por padrao o SQLite fica em `${STORAGE_DIR}/projects.sqlite3`. Para apontar outr
 ```bash
 export DATABASE_URL=sqlite:////caminho/para/projects.sqlite3
 ```
+
+Os acessos do viewer ficam na tabela `photo_access_logs`. O FastAPI grava pelo endpoint de metricas e o `view.php` grava diretamente no mesmo SQLite. Para o PHP usar outro arquivo, configure `METRICS_SQLITE_PATH`. Em instalacoes com proxy reverso, mantenha `TRUST_PROXY_HEADERS=true` para registrar o IP encaminhado pelo proxy.
 
 ## Limpeza temporaria
 

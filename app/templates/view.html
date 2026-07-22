@@ -6,7 +6,7 @@
   <title>Visualizar tour</title>
   <link rel="stylesheet" href="/static/viewer.css?v=project-view-27">
 </head>
-<body class="tour-view" data-project-id="{{ project_id }}" data-initial-scene-id="{{ initial_scene_id }}" data-show-btn-list="{{ show_btn_list }}">
+<body class="tour-view" data-project-id="{{ project_id }}" data-initial-scene-id="{{ initial_scene_id }}" data-show-btn-list="{{ show_btn_list }}" data-metrics-url="/api/projects/{{ project_id }}/metrics/photo-access">
   <div id="pano"></div>
   <svg id="annotationOverlay" class="annotation-overlay" aria-label="Anotações da vista"></svg>
   <div id="sketchToolbar" class="sketch-toolbar" aria-label="Ferramentas de esboço">
@@ -181,6 +181,6 @@
   <script>
     window.__PROJECT_DATA__ = {{ project_json | safe }};
   </script>
-  <script src="/static/viewer.js?v=project-view-31"></script>
+  <script src="/static/viewer.js?v=project-view-32"></script>
 </body>
 </html>

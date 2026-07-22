@@ -6,6 +6,7 @@
   var initialSceneId = (body.dataset.initialSceneId || "").trim();
   var showBtnList = body.dataset.showBtnList !== "false";
   var projectFileBase = body.dataset.projectFileBase || "";
+  var metricsUrl = (body.dataset.metricsUrl || "").trim();
   var panoElement = document.getElementById("pano");
   var emptyState = document.getElementById("emptyState");
   var emptyCover = document.getElementById("emptyCover");
@@ -71,6 +72,11 @@
   var pollTimer = null;
   var embeddedProject = window.__PROJECT_DATA__ || null;
   var panoramaZoomMultiplier = 3;
+  var lastTrackedPhotoId = null;
+
+  if (!metricsUrl && !projectFileBase) {
+    metricsUrl = "/api/projects/" + encodeURIComponent(projectId) + "/metrics/photo-access";
+  }
 
   function requestJSON(url) {
     var separator = url.indexOf("?") === -1 ? "?" : "&";
@@ -94,6 +100,21 @@
       return projectFileBase + "&asset=" + path;
     }
     return projectFileBase.replace(/\/+$/, "") + "/" + path;
+  }
+
+  function trackPhotoAccess(sceneData) {
+    var photoId = String((sceneData && sceneData.id) || "").trim();
+    if (!metricsUrl || !photoId || photoId === lastTrackedPhotoId) return;
+    lastTrackedPhotoId = photoId;
+    fetch(metricsUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photoId: photoId }),
+      credentials: "same-origin",
+      keepalive: true
+    }).catch(function () {
+      // A telemetria nao pode interromper o carregamento do panorama.
+    });
   }
 
   function imagePath(path) {
@@ -267,6 +288,7 @@
     viewer.setIdleMovement(null);
     scene.view.setParameters(scene.data.initialViewParameters || { yaw: 0, pitch: 0, fov: Math.PI / 2 });
     scene.scene.switchTo();
+    trackPhotoAccess(scene.data);
     sceneName.textContent = scene.data.name || scene.data.id;
     Array.prototype.forEach.call(sceneItems.children, function (item) {
       item.classList.toggle("current", item.dataset.id === scene.data.id);

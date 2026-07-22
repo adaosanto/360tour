@@ -107,6 +107,142 @@ function serve_project_asset(string $projectDir, string $asset): void
     exit;
 }
 
+function trusted_proxy_headers_enabled(): bool
+{
+    $value = strtolower(trim((string) (getenv('TRUST_PROXY_HEADERS') ?: 'true')));
+    return !in_array($value, ['0', 'false', 'no', 'off'], true);
+}
+
+function normalized_client_ip(string $value): string
+{
+    $value = trim($value);
+    return filter_var($value, FILTER_VALIDATE_IP) !== false ? $value : '';
+}
+
+function request_client_ip(): string
+{
+    if (trusted_proxy_headers_enabled()) {
+        $forwarded = explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
+        foreach ($forwarded as $candidate) {
+            $address = normalized_client_ip($candidate);
+            if ($address !== '') {
+                return $address;
+            }
+        }
+        $realIp = normalized_client_ip((string) ($_SERVER['HTTP_X_REAL_IP'] ?? ''));
+        if ($realIp !== '') {
+            return $realIp;
+        }
+    }
+    return normalized_client_ip((string) ($_SERVER['REMOTE_ADDR'] ?? '')) ?: '0.0.0.0';
+}
+
+function metrics_sqlite_path(string $storageDir): string
+{
+    $configured = trim((string) (getenv('METRICS_SQLITE_PATH') ?: ''));
+    return $configured !== '' ? $configured : rtrim($storageDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'projects.sqlite3';
+}
+
+function insert_photo_access_metric(string $databasePath, string $projectId, string $photoId, string $ipAddress, int $accessedAt): bool
+{
+    $createTable = 'CREATE TABLE IF NOT EXISTS photo_access_logs ('
+        . 'id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,'
+        . 'project_id VARCHAR(36) NOT NULL,'
+        . 'photo_id VARCHAR(255) NOT NULL,'
+        . 'ip_address VARCHAR(45) NOT NULL,'
+        . 'accessed_at BIGINT NOT NULL)';
+    $indexes = [
+        'CREATE INDEX IF NOT EXISTS ix_photo_access_logs_project_id ON photo_access_logs (project_id)',
+        'CREATE INDEX IF NOT EXISTS ix_photo_access_logs_photo_id ON photo_access_logs (photo_id)',
+        'CREATE INDEX IF NOT EXISTS ix_photo_access_logs_accessed_at ON photo_access_logs (accessed_at)',
+    ];
+
+    try {
+        if (class_exists('SQLite3')) {
+            $database = new SQLite3($databasePath);
+            $database->busyTimeout(3000);
+            if (!$database->exec($createTable)) {
+                return false;
+            }
+            foreach ($indexes as $sql) {
+                $database->exec($sql);
+            }
+            $statement = $database->prepare(
+                'INSERT INTO photo_access_logs (project_id, photo_id, ip_address, accessed_at) '
+                . 'VALUES (:project_id, :photo_id, :ip_address, :accessed_at)'
+            );
+            if ($statement === false) {
+                return false;
+            }
+            $statement->bindValue(':project_id', $projectId, SQLITE3_TEXT);
+            $statement->bindValue(':photo_id', $photoId, SQLITE3_TEXT);
+            $statement->bindValue(':ip_address', $ipAddress, SQLITE3_TEXT);
+            $statement->bindValue(':accessed_at', $accessedAt, SQLITE3_INTEGER);
+            $result = $statement->execute();
+            if ($result !== false) {
+                $result->finalize();
+            }
+            $database->close();
+            return $result !== false;
+        }
+
+        if (class_exists('PDO') && in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            $database = new PDO('sqlite:' . $databasePath);
+            $database->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $database->exec('PRAGMA busy_timeout = 3000');
+            $database->exec($createTable);
+            foreach ($indexes as $sql) {
+                $database->exec($sql);
+            }
+            $statement = $database->prepare(
+                'INSERT INTO photo_access_logs (project_id, photo_id, ip_address, accessed_at) '
+                . 'VALUES (:project_id, :photo_id, :ip_address, :accessed_at)'
+            );
+            return $statement->execute([
+                ':project_id' => $projectId,
+                ':photo_id' => $photoId,
+                ':ip_address' => $ipAddress,
+                ':accessed_at' => $accessedAt,
+            ]);
+        }
+    } catch (Throwable $error) {
+        return false;
+    }
+    return false;
+}
+
+function record_photo_access_metric(string $storageDir, string $projectId, array $project): void
+{
+    if (strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'POST') {
+        fail_response(405, 'Metodo nao permitido.');
+    }
+    $raw = (string) file_get_contents('php://input');
+    if (strlen($raw) > 4096) {
+        fail_response(413, 'Payload de metrica muito grande.');
+    }
+    $payload = json_decode($raw, true);
+    $photoId = is_array($payload) ? trim((string) ($payload['photoId'] ?? '')) : '';
+    if ($photoId === '' || strlen($photoId) > 255) {
+        fail_response(400, 'ID da foto invalido.');
+    }
+    $photoExists = false;
+    foreach (($project['scenes'] ?? []) as $scene) {
+        if (is_array($scene) && (string) ($scene['id'] ?? '') === $photoId) {
+            $photoExists = true;
+            break;
+        }
+    }
+    if (!$photoExists) {
+        fail_response(404, 'Foto nao encontrada neste projeto.');
+    }
+    if (!insert_photo_access_metric(metrics_sqlite_path($storageDir), $projectId, $photoId, request_client_ip(), time())) {
+        fail_response(503, 'Nao foi possivel salvar a metrica.');
+    }
+    http_response_code(204);
+    header('Cache-Control: no-store');
+    exit;
+}
+
 $projectId = project_id_from_request();
 $projectDir = project_dir($storageDir, $projectId);
 
@@ -126,6 +262,10 @@ if (!is_array($project)) {
 $project['settings'] = is_array($project['settings'] ?? null) ? $project['settings'] : [];
 $project['scenes'] = is_array($project['scenes'] ?? null) ? $project['scenes'] : [];
 
+if ((string) ($_GET['metric'] ?? '') === 'photo_access') {
+    record_photo_access_metric($storageDir, $projectId, $project);
+}
+
 $projectJson = json_encode(
     $project,
     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
@@ -136,6 +276,7 @@ if ($projectJson === false) {
 
 $scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? '/view.php');
 $assetBase = $scriptName . '?project=' . rawurlencode($projectId) . '&asset=';
+$metricsUrl = $scriptName . '?project=' . rawurlencode($projectId) . '&metric=photo_access';
 $initialSceneId = scene_id_from_request();
 $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false' ? 'false' : 'true';
 ?>
@@ -147,7 +288,7 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <title>Visualizar tour</title>
   <link rel="stylesheet" href="<?= h($staticUrl) ?>/viewer.css?v=project-view-27">
 </head>
-<body class="tour-view" data-project-id="<?= h($projectId) ?>" data-initial-scene-id="<?= h($initialSceneId) ?>" data-show-btn-list="<?= h($showBtnList) ?>" data-project-file-base="<?= h($assetBase) ?>">
+<body class="tour-view" data-project-id="<?= h($projectId) ?>" data-initial-scene-id="<?= h($initialSceneId) ?>" data-show-btn-list="<?= h($showBtnList) ?>" data-project-file-base="<?= h($assetBase) ?>" data-metrics-url="<?= h($metricsUrl) ?>">
   <div id="pano"></div>
   <svg id="annotationOverlay" class="annotation-overlay" aria-label="Anotações da vista"></svg>
   <div id="sketchToolbar" class="sketch-toolbar" aria-label="Ferramentas de esboço">
@@ -322,6 +463,6 @@ $showBtnList = strtolower((string) ($_GET['showBtnList'] ?? 'true')) === 'false'
   <script>
     window.__PROJECT_DATA__ = <?= $projectJson ?>;
   </script>
-  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-30"></script>
+  <script src="<?= h($staticUrl) ?>/viewer.js?v=project-view-32"></script>
 </body>
 </html>
